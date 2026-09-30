@@ -17,7 +17,6 @@
 命令行等价方式：
 
 ```powershell
-cd D:\68.AIGC\xAi-videoGen
 python tools/serve.py
 ```
 
