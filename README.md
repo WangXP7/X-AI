@@ -17,7 +17,6 @@
 命令行等价方式：
 
 ```powershell
-cd D:\PRIVACY-REDACTED\REDACTED-DIR
 python tools/serve.py
 ```
 
