@@ -1,0 +1,12 @@
+[
+  [
+    "@ffmpeg/ffmpeg",
+    "0.12.15",
+    "ffmpeg"
+  ],
+  [
+    "@ffmpeg/core",
+    "0.12.10",
+    "ffmpeg-core"
+  ]
+]

@@ -1,0 +1,76 @@
+import {createRequire} from 'node:module';
+import {mkdir,writeFile,readFile} from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
+import assert from 'node:assert/strict';
+import {sealLocalDefault} from '../src/local-default.js';
+const require=createRequire(import.meta.url);
+let chromium;try{({chromium}=require('playwright'));}catch{({chromium}=require(process.env.PLAYWRIGHT_PATH));}
+const browser=await chromium.launch({channel:'msedge',headless:true});
+const out=new URL('../test-results/',import.meta.url);await mkdir(out,{recursive:true});
+const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true});
+const fakeDefault=await sealLocalDefault('sk-synthetic-asset-suite-not-a-live-key');
+await context.route('**/private/default-access.json',r=>r.fulfill({json:fakeDefault}));
+await context.route('https://api.agnes-ai.cn/**',()=>{throw Error('Asset operations must not call the paid API');});
+const page=await context.newPage(),errors=[],checks=[];page.on('pageerror',e=>errors.push(e.message));
+// Slow local image decode deterministically to inspect progress and cancellation.
+await page.addInitScript(()=>{const original=window.createImageBitmap;window.__bitmapCalls=0;window.createImageBitmap=async(...args)=>{window.__bitmapCalls++;await new Promise(r=>setTimeout(r,100));return original(...args);};});
+const done=async()=>{await page.waitForFunction(()=>document.querySelector('#asset-operation-dialog').getAttribute('aria-busy')==='false'&&!document.querySelector('#asset-operation-progress').hidden);};
+const assets=()=>page.evaluate(async()=>{const {get}=await import('./src/storage.js');return (await get('state','project')).assets;});
+try{
+  await page.goto('http://127.0.0.1:4173/');await page.locator('[data-view=assets]').click();
+  const pngs=await page.evaluate(async()=>{
+    const generate=async(w,h,color,label)=>{const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.fillStyle='#f4ead7';x.fillRect(0,0,w,h);x.fillStyle=color;x.fillRect(12,12,w-24,h-24);x.fillStyle='#ffffff';x.font=`bold ${Math.max(25,Math.round(w/14))}px sans-serif`;x.textAlign='center';x.fillText(label,w/2,Math.min(100,h/5));x.fillText('FULL FRAME',w/2,h/2);x.fillText('BOTTOM',w/2,h-35);return c.toDataURL('image/png').split(',')[1];};
+    return {portrait:await generate(720,1280,'#73559b','PORTRAIT'),wide:await generate(1983,793,'#587f87','WIDE REFERENCE'),red:await generate(700,700,'#a25767','RED'),blue:await generate(700,700,'#5275a1','BLUE'),later:await generate(600,900,'#789454','LATER')};
+  });
+  const extreme=await page.evaluate(async()=>{
+    const {importAsset,optimizeImage}=await import('./src/media.js');const results=[];
+    for(const [w,h] of [[4000,20],[20,4000]]){const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').fillRect(0,0,w,h);const b=await new Promise(r=>c.toBlob(r,'image/png'));const original=await importAsset(new File([b],`${w}-${h}.png`,{type:'image/png'}));const fixed=await optimizeImage(original);results.push({width:fixed.width,height:fixed.height,errors:fixed.errors});}return results;
+  });
+  assert.ok(extreme.every(a=>Math.max(a.width,a.height)<=2048&&Math.min(a.width,a.height)>=256&&a.errors.length===0));
+  checks.push('extremely thin panoramas are padded within 2048px instead of creating an oversized canvas');
+  await page.evaluate(()=>window.__bitmapCalls=0);
+  const file=(name,data)=>({name,mimeType:'image/png',buffer:Buffer.from(data,'base64')});
+  const fixture=await readFile(new URL('fixtures/synthetic.mp4',import.meta.url));
+  const files=[file('竖版人物.png',pngs.portrait),file('长条参考板.png',pngs.wide),file('同内容副本.png',pngs.portrait),{name:'损坏.png',mimeType:'image/png',buffer:Buffer.from('broken')},{name:'说明.txt',mimeType:'text/plain',buffer:Buffer.from('not media')},file('同名素材.png',pngs.red),file('同名素材.png',pngs.blue),{name:'参考声音.m4a',mimeType:'audio/mp4',buffer:fixture}];
+  await page.locator('#library-files').setInputFiles(files);await page.locator('#asset-operation-dialog').waitFor();
+  assert.equal((await assets()).length,0);assert.equal(await page.evaluate(()=>window.__bitmapCalls),0);
+  const plan=await page.locator('#asset-check-list').innerText();for(const value of ['15MB','256–5760','0.4–2.5','SHA-256','2–12','5 张'])assert.ok(plan.includes(value));
+  await page.screenshot({path:fileURLToPath(new URL('assets-import-plan.png',out))});checks.push('validation plan appears before any image decoding or storage writes');
+  await page.locator('#asset-operation-start').click();await page.waitForFunction(()=>document.querySelector('#asset-operation-dialog').getAttribute('aria-busy')==='true');
+  assert.ok(await page.locator('#asset-progress-bar').isVisible());await page.waitForFunction(()=>document.querySelector('#asset-progress-bar').value>0&&document.querySelector('#asset-operation-dialog').getAttribute('aria-busy')==='true');await page.screenshot({path:fileURLToPath(new URL('assets-import-progress.png',out))});
+  await done();assert.equal(await page.locator('#asset-progress-count').textContent(),'8 / 8');
+  assert.equal(await page.locator('#asset-operation-results .error').count(),2);assert.equal(await page.locator('#asset-operation-results .duplicate').count(),1);assert.equal(await page.locator('#asset-operation-results .warning').count(),1);
+  const originals=await assets();assert.equal(originals.length,5);assert.equal(await page.locator('#selected-assets .asset-chip').count(),0);
+  checks.push('progress counts every file; corrupt/unsupported files do not stop the batch; duplicates are reused and library imports do not fill the current shot');
+  await page.locator('#asset-operation-done').click();assert.equal(await page.locator('.asset-card').count(),5);
+  await page.screenshot({path:fileURLToPath(new URL('assets-library-full-images.png',out)),fullPage:true});
+  const portrait=originals.find(a=>a.name==='竖版人物.png'),wide=originals.find(a=>a.name==='长条参考板.png');
+  const imageLayout=await page.locator(`[data-library-image="${portrait.id}"]`).evaluate(el=>{const p=el.parentElement.getBoundingClientRect(),r=el.getBoundingClientRect();return {fit:getComputedStyle(el).objectFit,position:getComputedStyle(el).position,width:r.width,height:r.height,parentWidth:p.width,parentHeight:p.height};});
+  assert.equal(imageLayout.fit,'contain');assert.equal(imageLayout.position,'absolute');assert.ok(imageLayout.height<=imageLayout.parentHeight+1);
+  assert.equal(await page.locator(`[data-asset-card="${wide.id}"]`).evaluate(el=>getComputedStyle(el).gridColumnStart),'span 2');
+  await page.locator(`[data-preview-asset="${portrait.id}"]`).click();await page.locator('#asset-preview-dialog').waitFor();
+  const fit=await page.locator('#asset-preview-image').evaluate(el=>{const r=el.getBoundingClientRect(),p=document.querySelector('#asset-preview-stage').getBoundingClientRect();return r.width<=p.width&&r.height<=p.height;});assert.equal(fit,true);
+  await page.locator('#asset-preview-original').click();assert.equal(await page.locator('#asset-preview-scale').textContent(),'100%');await page.locator('#asset-preview-more').click();assert.equal(await page.locator('#asset-preview-scale').textContent(),'130%');await page.locator('#asset-preview-fit').click();await page.locator('#asset-preview-dialog .close-dialog').click();
+  checks.push('portrait and panoramic thumbnails preserve the whole image; preview supports fit, original size and zoom');
+  await page.locator('#assets-select-issues').click();assert.equal(await page.locator('#asset-selection-count').textContent(),'已选 1 / 5 项');
+  await page.locator('#assets-select-all').check();await page.locator('#assets-batch-optimize').click();assert.ok((await page.locator('#asset-check-list').innerText()).includes('不会裁掉人物'));await page.locator('#asset-operation-start').click();await done();
+  assert.equal(await page.locator('#asset-operation-results .skipped').count(),1);
+  let current=await assets();assert.equal(current.length,9);
+  for(const a of originals)assert.equal(current.find(x=>x.id===a.id).sha256,a.sha256);
+  const derived=current.filter(a=>a.derivedFrom);assert.equal(derived.length,4);assert.ok(derived.every(a=>a.errors.length===0));assert.ok(derived.every(a=>a.width/a.height<=2.5&&a.width/a.height>=.4));
+  assert.ok(await page.locator('#asset-operation-download-results').isVisible());await page.locator('#asset-operation-select-results').click();assert.equal(await page.locator('#asset-selection-count').textContent(),'已选 4 / 9 项');await page.locator('#assets-clear-selection').click();for(const a of originals)await page.locator(`[data-pick-asset="${a.id}"]`).check();await page.locator('#assets-batch-optimize').click();await page.locator('#asset-operation-start').click();await done();assert.equal((await assets()).length,9);assert.equal(await page.locator('#asset-operation-results .duplicate').count(),4);
+  checks.push('batch optimization preserves original hashes, skips audio, revalidates four image derivatives and reuses previous results on retry');
+  await page.locator('#asset-operation-done').click();await page.locator('#assets-select-all').check();
+  const downloaded=page.waitForEvent('download');await page.locator('#assets-batch-download').click();const zip=await downloaded;await done();await zip.saveAs(fileURLToPath(new URL('assets-batch.zip',out)));
+  assert.ok(await page.locator('#asset-download-ready').isVisible());assert.equal(await page.locator('#asset-operation-results .success').count(),9);await writeFile(new URL('assets-zip-expected.json',out),JSON.stringify(await assets()));
+  checks.push('batch download creates one ZIP with unique filenames and a source/hash manifest; a second download button remains available');
+  await page.locator('#asset-operation-done').click();
+  await page.locator('#library-files').setInputFiles([file('继续测试1.png',pngs.later),file('继续测试2.png',pngs.red),file('继续测试3.png',pngs.blue)]);await page.locator('#asset-operation-start').click();await page.waitForFunction(()=>document.querySelector('#asset-progress-phase').textContent.includes('解码图片'));await page.locator('#asset-operation-stop').click();await done();
+  assert.ok((await page.locator('#asset-progress-phase').textContent()).includes('已停止'));assert.ok(await page.locator('#asset-operation-resume').isVisible());const partial=await page.locator('#asset-progress-count').textContent();assert.equal(partial,'1 / 3');
+  await page.locator('#asset-operation-resume').click();await done();assert.equal(await page.locator('#asset-progress-count').textContent(),'2 / 2');assert.equal((await assets()).length,10);
+  checks.push('stop finishes only the current file; resume processes remaining files and preserves completed results');
+  await page.locator('#asset-operation-done').click();await page.setViewportSize({width:390,height:844});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.screenshot({path:fileURLToPath(new URL('assets-mobile.png',out)),fullPage:true});
+  assert.deepEqual(errors,[]);checks.push('mobile asset toolbar, whole-image previews and progress layout do not overflow horizontally');
+  const report={at:new Date().toISOString(),checks,imageLayout,pageErrors:errors};await writeFile(new URL('assets-results.json',out),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
+}finally{await browser.close();}

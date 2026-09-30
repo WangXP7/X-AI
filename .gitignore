@@ -1,0 +1,14 @@
+private/
+.local/
+test-results/
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/
+.env*
+!.env.example
+*.log
+.local-*
+
+# Local handoff snapshot (public process notes are in docs/)
+暂停与续做记录.md

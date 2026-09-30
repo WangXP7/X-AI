@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/ffmpegwasm/ffmpeg.wasm",
+  "tag": "v12.15",
+  "commit": "71aa99d37c02a7b4c435275ca9ef50e612f6efa1",
+  "core_version": "0.12.10",
+  "archive_sha256": "53c5842f160cece0e39345876f9483b56aa84b966637ff6f624353a0fa884219"
+}

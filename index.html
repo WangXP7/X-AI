@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f6f6f3"><meta name="description" content="X-AI · 在浏览器里编排分镜、生成视频。文件留在本地，创作由你掌控。">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob: https:; connect-src 'self' https: http://127.0.0.1:4174; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <title>X-AI · 本地视频创作台</title><link rel="icon" href="./assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="./"><img src="./assets/logo.svg" alt="X-AI Logo"><span>X-AI<small>VIDEO STUDIO</small></span></a>
+    <div class="workspace-label">个人工作空间 <span>LOCAL</span></div>
+    <nav aria-label="主导航">
+      <button class="nav active" data-view="studio"><span>◫</span>创作工作台</button>
+      <button class="nav" data-view="queue"><span>▤</span>任务与成片 <b id="nav-count">0</b></button>
+      <button class="nav" data-view="assets"><span>▧</span>本地素材库</button>
+      <button class="nav" data-view="guide"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5C9 4.5 5.5 4 2.5 5v14c3-1 6.5-.5 9.5 1.5C15 18.5 18.5 18 21.5 19V5c-3-1-6.5-.5-9.5 1.5Z"/><path d="M12 6.5v14M5.5 8.5l3.5 1M5.5 12l3.5 1M15 9.5l3.5-1M15 13l3.5-1"/></svg></span>操作指南</button>
+    </nav>
+    <div class="sidebar-bottom"><div class="local-card"><div class="local-card-title"><i aria-hidden="true"></i><strong><span>你的文件，</span><span>你的电脑</span></strong></div><p>参考素材仅在提交时发送给 AgnesAI，生成结果保存在本地。</p></div><button id="settings-button" class="nav"><span>⚙</span>连接与密钥<span id="key-dot" class="dot"></span></button><div class="version"><span>X-AI 1.0</span><strong>® YiQiXP</strong></div><p class="brand-tagline">让X-AI把你的故事美梦成真！</p></div>
+  </aside>
+  <main>
+    <header class="topbar"><div class="breadcrumb">工作空间 <span>/</span> <b id="view-label">创作工作台</b></div><div class="topbar-right"><button type="button" class="connection-pill" id="connection-status"><i></i>正在载入密钥</button><button class="icon-button" id="help-button" title="帮助" aria-label="查看帮助">?</button><div class="avatar">X</div></div></header>
+    <div class="page">
+      <section id="studio-view" class="view">
+        <div class="directory-bar">
+          <div class="directory-location"><div class="folder-icon" aria-hidden="true">▱</div><div class="directory-copy"><strong id="directory-name">选择本地创作文件夹</strong><small id="directory-desc">素材、视频与记录保存在这里</small></div><button id="choose-folder" class="button secondary">选择文件夹 ↗</button><button id="restore-folder" class="button secondary" hidden>重新授权</button></div>
+          <div class="workspace-stats" aria-label="项目概况"><span>待处理 <b id="workspace-pending">0</b></span><span>已生成 <b id="workspace-ready">0 / 0</b></span><span>素材 <b id="workspace-assets">0</b></span><span class="workspace-limit">单镜 4–12 秒 · 间隔 ≥90 秒</span></div>
+        </div>
+        <details id="directory-details" class="directory-details" hidden><summary>保存位置：<span id="directory-location-label"></span></summary><p id="directory-path-note"></p><p>references/ 优化素材 · clips/ 单镜视频 · episodes/ 分集成片 · backups/ 原文件备份 · project.json 制作记录</p><p id="directory-backup-status" role="status"></p></details>
+        <div class="studio-layout">
+          <section class="panel composer" data-create-mode="single"><div class="panel-heading"><div class="segmented" role="tablist" aria-label="创作模式"><button class="selected" id="mode-single" role="tab" aria-label="单段生成" aria-selected="true" aria-controls="job-form">单段生成</button><button id="mode-batch" role="tab" aria-label="多段一次生成" aria-selected="false" aria-controls="job-form" tabindex="-1">多段一次生成 <span>BATCH</span></button></div><span class="subtle" id="mode-heading-note">单镜创作</span></div>
+            <form id="job-form" role="tabpanel" aria-labelledby="mode-single"><div id="creation-mode-note" class="creation-mode-note" role="status"><strong>单段生成</strong><span>填写一段画面与动作，生成一个视频。</span></div>
+              <fieldset id="single-editor" class="mode-editor" aria-label="单段生成操作区">
+              <div class="form-grid"><label>镜号<input id="shot-id" value="S01" required maxlength="64" placeholder="例如 A01-01"></label><label>分集 / 分组<input id="episode" value="EP01" required maxlength="64"></label></div>
+              <div class="label-line"><label for="prompt">画面与动作描述 <span class="required">*</span></label><button type="button" class="text-button" id="prompt-example">填入示例 ↙</button></div>
+              <textarea id="prompt" rows="3" placeholder="描述主体、场景、动作和镜头。一个分镜只表达一个主要动作。&#10;&#10;例如：一只背着旅行包的小熊走入晨雾中的森林，镜头缓缓跟随，柔和水彩风格……"></textarea>
+              <div class="prompt-toolbar"><span id="prompt-count">0 字</span><button type="button" class="text-button" id="optimize-prompt">✦ 补充画幅与对白约束</button></div>
+              <div class="form-grid three"><label>生成方式<select id="generation-mode"><option value="text">文字生成</option><option value="reference">图像 / 声音参考</option><option value="keyframe">首尾帧控制</option></select></label><label>片段时长<select id="seconds"><option>4</option><option>5</option><option>6</option><option>7</option><option selected>8</option><option>9</option><option>10</option><option>11</option><option>12</option></select></label><label>画面比例<select id="aspect"><option value="9:16">▯ 9:16 竖屏</option><option value="16:9">▭ 16:9 横屏</option><option value="1:1">□ 1:1 方形</option><option value="4:3">4:3</option><option value="3:4">3:4</option><option value="21:9">21:9</option></select></label></div>
+              <div class="reference-heading"><label>参考素材</label><button type="button" id="studio-open-library" class="light-button">从素材库选择 <span id="studio-library-count">0</span> 项 ↗</button><span>图片 ≤ 5 张 · 声音 ≤ 3 段</span></div>
+              <div id="drop-zone" class="drop-zone"><span class="upload-symbol" aria-hidden="true">↑</span><div><strong>拖入参考图片或声音</strong><small>PNG / JPG / WebP · MP3 / WAV / M4A 等</small></div><label class="button secondary small" for="asset-files">选择本地文件</label><input id="asset-files" type="file" accept="image/*,audio/*" multiple hidden></div>
+              <div id="selected-assets" class="selected-assets"></div>
+              <div id="keyframe-fields" class="form-grid" hidden><label>首帧<select id="first-frame"><option value="">不设置</option></select></label><label>尾帧<select id="last-frame"><option value="">不设置</option></select></label></div>
+              <div class="form-grid"><label>指定对白（可留空）<input id="dialogue" placeholder="角色：台词；留空即无对白，请勿只写在画面描述里"></label><label>随机种子（可选）<input id="seed" type="number" step="1" placeholder="留空随机"></label></div>
+              </fieldset>
+              <fieldset id="batch-editor" class="mode-editor" aria-label="批量生成操作区" hidden disabled>
+              <section class="batch-options" id="batch-panel" aria-labelledby="batch-title" hidden><div class="batch-title-row"><h2 id="batch-title">批量分镜清单</h2><span>文本 / JSON / CSV / TSV</span></div>
+                <ol class="batch-steps" aria-label="批量操作流程"><li><b>1</b>导入清单</li><li><b>2</b>读取引用</li><li><b>3</b>检查入队</li></ol>
+                <p class="hint">CSV 每行一镜，无需 ---；自动识别逗号、制表符、分号或竖线。纯文本可用独立一行的 --、---、===、*** 分段。每批最多 1000 镜 / 10MB。</p>
+                <label class="sr-only" for="batch-input">批量分镜内容</label><textarea id="batch-input" rows="8" placeholder="粘贴带表头的 CSV，或导入清单文件。&#10;镜号,时长秒,画面动作,参考图&#10;S01,8,小熊走进森林,C01=图片/小熊.png"></textarea>
+                <div class="batch-file-actions"><button type="button" class="light-button" id="batch-example">载入 3 镜示例</button><button type="button" class="light-button" id="batch-open-file">导入清单文件</button><input type="file" id="batch-file" accept=".json,.csv,.tsv,.txt" hidden><button type="button" class="light-button" id="download-template">下载 JSON 模板</button><span id="batch-loaded-file"></span></div>
+                <div class="batch-source-tools"><div class="inline-actions wrap"><button type="button" class="button secondary small" id="batch-source-folder">选择清单与素材目录</button><button type="button" class="light-button" id="batch-read-assets">读取引用并展开</button><button type="button" class="light-button" id="batch-check">预览字段与匹配</button><button type="button" class="light-button" id="batch-open-library">打开共用素材库 ↗</button><button type="button" id="batch-export-resolved" class="light-button" hidden>下载展开后的清单</button></div>
+                  <p id="batch-source-location">尚未授权素材目录。一次选择包含清单和素材的共同上级目录，即可按相对路径读取，无需逐个添加。</p><input type="file" id="batch-source-fallback" webkitdirectory multiple hidden>
+                  <label id="batch-source-selector" hidden>清单在目录中的位置<select id="batch-source-list"></select></label><p id="batch-read-status" role="status"></p>
+                  <details><summary>文本与素材引用怎么写？</summary><p>提示词或对白可直接写相对的 .txt / .md / .json / .csv 文件路径，也可用“提示词文件”“对白文件”列。文件内还能继续引用其他文件，平台会递归读取。用 [提示词](../提示词.md#标题)、{{file:../风格.txt}} 可在正文中插入内容；JSON 用 #/字段/子字段 定位。</p><p>多镜文件会按当前镜号匹配。图片、声音链接转成参考素材和 &lt;Picture n&gt; / &lt;Audio n&gt; 占位；循环、缺失或歧义会阻止整批入队。无法自动处理的 PDF / Word 请先转换为文本文件。</p><p>使用 files、参考图、参考声音、首帧或尾帧列，填写相对清单的路径，例如 图片/小熊.png 或 ../声音/对白.wav；多项用 | 或分号隔开。也可写 C01=图片/小熊.png，之后复用 C01。CSV 中包含分隔符、换行的字段必须加双引号。</p><p>只在授权目录内读取原文件，不复制到 references。优化版存入输出目录的 references，平台记录原路径到优化版的映射。相同编号存在多个版本时，请写明路径。</p></details>
+                </div><div id="batch-text-report" class="batch-analysis reference-report" aria-live="polite" hidden></div><div id="batch-analysis" class="batch-analysis" aria-live="polite" hidden></div>
+                <details id="batch-defaults" class="batch-defaults"><summary>批量默认设置 <span id="batch-defaults-summary">8 秒 · 9:16 · EP01 · 无共用素材</span></summary><p>仅补齐清单未填写的参数。清单里的镜号、分组、时长、画幅和素材优先；明确空的素材列表示不使用参考。</p>
+                  <div class="form-grid four"><label>缺省时长<select id="batch-seconds"><option>4</option><option>5</option><option>6</option><option>7</option><option selected>8</option><option>9</option><option>10</option><option>11</option><option>12</option></select></label><label>缺省画幅<select id="batch-aspect"><option value="9:16">9:16 竖屏</option><option value="16:9">16:9 横屏</option><option value="1:1">1:1 方形</option><option value="4:3">4:3</option><option value="3:4">3:4</option><option value="21:9">21:9</option></select></label><label>缺省分组<input id="batch-episode" value="EP01" maxlength="64" placeholder="EP01"></label><label>自动镜号前缀<input id="batch-id-prefix" value="S01" maxlength="55" placeholder="S01"></label></div>
+                  <div class="batch-common-reference"><div><strong>共用参考素材（可选）</strong><p>仅用于没有填写素材列的分镜；单段模式的选择单独保留。</p></div><button type="button" id="batch-default-library" class="light-button">从素材库选择</button></div><div id="batch-selected-assets" class="selected-assets"></div>
+                </details>
+                <label class="checkbox"><input type="checkbox" id="continuity">将上一镜当前版本的末帧用于下一镜（仅参考模式）</label></section>
+              </fieldset>
+              <div id="validation-output" class="validation-output" aria-live="polite"></div>
+              <div class="form-footer"><label class="video-model-field" for="video-model"><span>视频生成平台与模型</span><select id="video-model" name="video-model" title="AgnesAI · Agnes Video 2.5 Flash · 720P · 最长 12 秒" aria-describedby="video-model-mobile-info"><option value="agnes-video-2.5-flash">AgnesAI · Agnes Video 2.5 Flash · 720P · 最长 12 秒</option></select><small id="video-model-mobile-info" class="video-model-mobile-info">AgnesAI · Agnes Video 2.5 Flash<br>720P · 最长 12 秒</small></label><button type="submit" class="button primary" id="add-jobs">检查并加入队列 <span>→</span></button></div>
+            </form>
+          </section>
+          <aside class="studio-aside"><section class="panel mini-queue"><div class="panel-heading"><h2>制作动态</h2><span class="live-badge">LIVE</span></div><div class="big-progress"><strong id="ready-count">00</strong><span>/ <b id="total-count">00</b> 镜已生成</span></div><div class="progress-track"><div id="overall-progress"></div></div><div id="mini-jobs" class="mini-jobs"><div class="empty-mini"><span>◌</span><p>下一部作品，从第一镜开始。</p></div></div><button class="button secondary full" id="go-queue">打开任务与成片 ↗</button></section>
+            <section class="tip-card"><span>✦</span><h3>慢一点，稳一点。</h3><p>每次请求至少间隔 90 秒，只运行一个生成任务。限流会自动延长等待，刷新也不会重复提交。</p><div>4—12 秒 / 镜 <b>单任务串行</b></div></section>
+            <section class="checklist-card"><h3>从素材到成片</h3><p><b>01</b> 校验素材，明确单镜动作</p><p><b>02</b> 依次生成，原任务持续追踪</p><p><b>03</b> 本地检查，再由你审核内容</p><p><b>04</b> 分集拼接，下载完整记录</p></section>
+          </aside>
+        </div>
+      </section>
+      <section id="queue-view" class="view" hidden><div class="page-title"><div><div class="eyebrow">PRODUCTION BOARD</div><h1>每个分镜，都有进度。</h1><p>生成记录、历史版本与当前成片，放在同一个地方。</p></div><button id="new-from-queue" class="button primary">＋ 新建分镜</button></div><div class="queue-toolbar"><select id="queue-filter" aria-label="筛选任务"><option value="all">全部任务</option><option value="pending">等待处理</option><option value="active">正在生成</option><option value="ready">已生成</option><option value="attention">需要处理</option></select><div class="inline-actions"><button class="button secondary" id="new-project">新建项目</button><button class="button secondary" id="import-project">恢复项目</button><button class="button secondary" id="export-project">导出记录</button><button class="button secondary" id="export-notes">导出 MD</button><button class="button secondary" id="pause-queue">暂停新提交</button><button class="button primary" id="start-queue">开始 / 继续队列 ▶</button></div></div><div id="queue-notice" class="notice">等待任务加入。关闭页面将暂停本地追踪，再打开后点击继续即可。</div><div id="jobs-grid" class="jobs-grid"></div><section class="panel episodes-panel"><div class="panel-heading"><h2>按集拼接</h2><small>只使用各镜当前选定版本</small></div><div id="episodes-list"></div></section></section>
+      <section id="assets-view" class="view" hidden>
+        <div class="page-title"><div><h1>本地素材库</h1><p>项目共用素材池：导入一次，单段与批量分镜都可复用。</p></div><label class="button primary" for="library-files">＋ 添加素材</label><input id="library-files" type="file" accept="image/*,audio/*" multiple hidden></div>
+        <p class="library-link-note">单段：勾选后点“用于当前分镜”；批量：在清单中写文件名、编号或相对路径。优化后自动记住替代关系，原图与已生成的历史任务保留。<button id="library-return-studio" class="light-button">返回创作工作台 ↗</button></p><div class="asset-check-intro"><strong>导入前会先展示校验清单</strong><span>检查格式与可读取性、大小、图片尺寸 / 比例、声音时长和重复文件；人物、画面与对白内容需要你审核。</span></div>
+        <div class="asset-batch-toolbar" aria-label="素材批量操作"><div class="asset-pick-tools"><label class="checkbox"><input type="checkbox" id="assets-select-all">全选</label><span id="asset-selection-count" aria-live="polite">已选 0 / 0 项</span><button id="assets-select-issues" class="text-button">选择待优化图片</button><button id="assets-clear-selection" class="text-button">清空</button></div><div class="inline-actions wrap"><button id="assets-batch-use" class="button secondary" disabled>用于当前分镜</button><button id="assets-batch-optimize" class="button secondary" disabled>批量优化图片</button><button id="assets-batch-download" class="button primary" disabled>批量下载 ZIP</button></div></div>
+        <div id="asset-library" class="asset-library"></div>
+      </section>
+      <section id="guide-view" class="view" hidden><div class="page-title"><div><div class="eyebrow">A LITTLE GUIDANCE</div><h1>把操作交给工具，把判断留给你。</h1><p>从第一次连接，到数百镜的稳定生产。</p></div></div><div id="guide-content" class="guide-grid"></div></section>
+      <footer class="page-footer"><span><img src="./assets/favicon.svg" alt=""> X-AI · 本地视频创作台</span><span>文件在本地 · 生成需联网 · 内容由你审核</span></footer>
+    </div>
+  </main>
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+    <div class="dialog-heading"><div><h2 id="settings-title">连接与密钥</h2><p>默认密钥即开即用，也可以换成自己的密钥。</p></div><button class="icon-button close-dialog" aria-label="关闭连接与密钥">×</button></div>
+    <div class="dialog-body settings-scroll">
+      <div id="vault-status" class="key-status"><span class="key-status-icon" aria-hidden="true">◇</span><div><strong id="vault-state-title">尚未解锁密钥</strong><p id="vault-state-detail">选择下面一种方式连接。</p></div></div>
+      <section class="basic-credentials" aria-label="密钥设置">
+        <div class="default-key-row"><div><h3>系统默认密钥</h3><p id="default-key-description">正在读取本机配置…</p></div><button id="use-default-key" class="button secondary">使用默认密钥</button></div>
+        <form id="basic-key-form" novalidate><label for="basic-api-key">换用自己的密钥</label><div class="basic-key-entry"><div class="password-field"><input id="basic-api-key" type="password" autocomplete="off" placeholder="粘贴以 sk- 开头的 API 密钥" aria-describedby="basic-key-help settings-feedback"><button id="toggle-basic-key" type="button" aria-label="显示或隐藏新密钥" aria-pressed="false">显示</button></div><button id="apply-basic-key" class="button primary" type="submit">使用新密钥</button></div><p class="key-note" id="basic-key-help">本次打开有效，关闭或刷新后恢复默认。需要加密保存时，请展开高级模式。</p></form>
+      </section>
+      <details id="advanced-mode" class="advanced-mode"><summary>高级模式 <span>加密保存、口令解锁、备份与连接设置</span></summary><div class="advanced-mode-body">
+      <div class="advanced-key-heading"><p class="key-note">需要长期保存或迁移密钥时使用。</p><button id="lock-key" class="button secondary small" hidden>停用当前密钥</button></div>
+      <div id="credential-entry">
+        <div class="key-tabs" role="tablist" aria-label="密钥使用方式"><button id="saved-key-tab" class="selected" role="tab" aria-controls="saved-key-pane" aria-selected="true">使用已存密钥</button><button id="new-key-tab" role="tab" aria-controls="new-key-pane" aria-selected="false">输入新密钥</button></div>
+        <section id="saved-key-pane" role="tabpanel" aria-labelledby="saved-key-tab">
+          <div class="stored-source"><span class="step-number" aria-hidden="true">1</span><div><h3 id="stored-key-title">正在查找已存密钥…</h3><p id="stored-key-description">无需重复输入原来的 API 密钥。</p></div></div>
+          <label id="saved-source-choice" hidden>选择要用的密钥<select id="saved-key-source"></select></label>
+          <div id="saved-key-empty" class="key-empty" hidden>这里暂时没有已存密钥。你可以在下方导入加密备份，或者切换到“输入新密钥”。</div>
+          <form id="unlock-form" novalidate hidden>
+            <div id="local-password-help" class="local-password-help" hidden><span class="step-number" aria-hidden="true">2</span><div><h3>获取本机解锁口令</h3><p>第一次使用：下载下方小工具，在这台电脑上双击运行。口令会复制到剪贴板，再回到这里粘贴。</p><a class="button secondary" id="download-password-helper" href="./tools/copy-unlock-password.cmd" download="获取本机解锁口令.cmd">下载取口令工具 ↓</a><p class="key-note">也可在 X-AI 目录运行“查看默认保险箱口令.ps1”。网页不能直接读取 Windows 保护的口令。</p></div></div>
+            <p id="custom-password-help" class="key-note">请输入保存这份密钥时设置的解锁口令；如果来自别人提供的备份，请向提供者获取口令。</p>
+            <label for="vault-password" class="key-field-title">解锁口令 <span>不是 API 密钥</span></label><input id="vault-password" type="password" autocomplete="off" placeholder="在这里粘贴口令，或输入你设置的口令" aria-describedby="unlock-help settings-feedback">
+            <p id="unlock-help" class="key-note">口令只用于解开加密文件，不会发送给 AgnesAI。</p>
+
+          </form>
+        </section>
+        <section id="new-key-pane" role="tabpanel" aria-labelledby="new-key-tab" hidden>
+          <p class="key-pane-intro">没有已存密钥，或想换一份密钥？在这里填写 AgnesAI 提供的 API 密钥。</p>
+          <form id="new-key-form" novalidate>
+            <label for="api-key">AgnesAI API 密钥</label><div class="password-field"><input id="api-key" type="password" autocomplete="off" placeholder="以 sk- 开头" aria-describedby="settings-feedback"><button id="toggle-api-key" type="button" aria-label="显示或隐藏 API 密钥" aria-pressed="false">显示</button></div>
+            <label class="checkbox"><input type="checkbox" id="remember-key" checked>加密保存到此浏览器，下次只需解锁</label>
+            <div id="new-password-fields" class="new-password-fields"><label>设置解锁口令<input id="new-vault-password" type="password" autocomplete="new-password" placeholder="自己设置，至少 12 位" aria-describedby="settings-feedback"></label><label>再次输入口令<input id="confirm-vault-password" type="password" autocomplete="new-password" placeholder="再输入一次，避免记错" aria-describedby="settings-feedback"></label><p class="key-note">请记住这份口令。它不会保存在网页中，也不是你的 API 密钥。</p></div>
+
+          </form>
+        </section>
+      </div>
+      <div class="advanced-key-actions"><button id="unlock-key" class="button secondary" type="submit" form="unlock-form">解锁并使用</button><button id="save-key" class="button primary" type="submit" form="new-key-form" hidden>加密保存并使用</button></div>
+      <details class="key-management"><summary>备份、导入与删除</summary><div class="inline-actions wrap"><label class="button secondary" for="vault-import">导入加密密钥文件</label><input id="vault-import" type="file" accept=".json" hidden><button id="export-vault" class="button secondary">导出加密备份</button><button id="forget-key" class="text-button danger">删除浏览器副本</button></div><p class="key-note">删除只影响此浏览器的加密副本，不会删除本机预存文件或视频。</p></details>
+      <details id="connection-advanced" class="connection-advanced"><summary>高级连接设置 <span>默认直连，遇到跨域问题再调整</span></summary><label>调用方式<select id="connection-mode"><option value="direct">浏览器直连 AgnesAI（默认）</option><option value="bridge">本机连接器（解决跨域）</option></select></label><div id="bridge-settings" hidden><p class="key-note">在电脑上运行 tools/connector.py，把显示的配对码填在下方。Pages 网址还需加入连接器允许列表。</p><label>本机配对码<input type="password" id="bridge-token" autocomplete="off" placeholder="来自本机连接器，每次重启后更新"></label></div><div class="form-grid"><label>请求间隔（秒，至少 90）<input type="number" id="request-gap" min="90" max="3600" value="90"></label><label>API 地址<select id="api-origin"><option>https://api.agnes-ai.cn</option><option>https://apihub.agnes-ai.com</option></select></label></div></details>
+      </div></details>
+    </div>
+    <div class="settings-footer"><div id="settings-feedback" class="settings-feedback" role="status" aria-live="polite" aria-atomic="true" hidden></div><div class="settings-footer-actions"><div><div class="settings-primary-actions"><button class="button primary" id="test-connection" disabled>检查连接</button></div><p id="connection-next-step">启用密钥后即可检查连接，不会创建视频。</p></div><button id="done-settings" class="button secondary">完成</button></div></div>
+  </dialog>
+  <dialog id="asset-operation-dialog" aria-labelledby="asset-operation-title">
+    <div class="dialog-heading"><div><h2 id="asset-operation-title">导入前确认校验内容</h2><p id="asset-operation-subtitle"></p></div><button id="asset-operation-close" class="icon-button" aria-label="关闭素材处理窗口">×</button></div>
+    <div class="asset-operation-body">
+      <section id="asset-operation-plan"><h3 id="asset-plan-heading">本次将在你的电脑上检查</h3><ul id="asset-check-list"></ul><p id="asset-storage-note" class="notice"></p><details><summary>本次文件</summary><ul id="asset-plan-files" class="asset-plan-files"></ul></details></section>
+      <section id="asset-operation-progress" hidden><div class="asset-progress-heading"><strong id="asset-progress-phase">准备中</strong><span id="asset-progress-count">0 / 0</span></div><progress id="asset-progress-bar" value="0" max="1" aria-label="素材处理进度"></progress><p id="asset-progress-file"></p><p id="asset-progress-summary" role="status" aria-live="polite"></p><details id="asset-results-details"><summary>逐项结果与处理建议</summary><ol id="asset-operation-results"></ol></details></section>
+    </div>
+    <div class="asset-operation-footer"><p id="asset-operation-feedback" role="status" aria-live="polite" hidden></p><div class="inline-actions wrap"><button id="asset-operation-start" class="button primary">开始校验并导入</button><button id="asset-operation-stop" class="button secondary" hidden>完成当前项后停止</button><button id="asset-operation-resume" class="button secondary" hidden>继续剩余项</button><button id="asset-operation-retry" class="button secondary" hidden>重试失败项</button><button id="asset-operation-select-results" class="button secondary" hidden>选中本轮结果</button><button id="asset-operation-download-results" class="button primary" hidden>下载本轮结果 ZIP</button><button id="asset-download-ready" class="button primary" hidden>再次下载 ZIP</button><button id="asset-operation-report" class="button secondary" hidden>下载处理记录</button><button id="asset-operation-done" class="button secondary">取消</button></div></div>
+  </dialog>
+  <dialog id="asset-preview-dialog" class="large-dialog" aria-labelledby="asset-preview-title"><div class="dialog-heading"><div><h2 id="asset-preview-title">素材全图</h2><p id="asset-preview-info"></p></div><button class="icon-button close-dialog" aria-label="关闭素材预览">×</button></div><div class="asset-preview-toolbar"><button id="asset-preview-fit" class="button secondary">适应窗口</button><button id="asset-preview-original" class="button secondary">原始尺寸</button><button id="asset-preview-less" class="button secondary" aria-label="缩小图片">－</button><output id="asset-preview-scale" aria-live="polite">100%</output><button id="asset-preview-more" class="button secondary" aria-label="放大图片">＋</button></div><div id="asset-preview-stage"><div class="asset-preview-inner"><img id="asset-preview-image" alt=""></div></div></dialog>
+  <dialog id="detail-dialog" class="large-dialog"><div class="dialog-heading"><h2 id="detail-title">任务详情</h2><button class="icon-button close-dialog" aria-label="关闭">×</button></div><div id="detail-body" class="dialog-body"></div></dialog>
+  <dialog id="edit-dialog"><div class="dialog-heading"><h2 id="edit-title">编辑分镜</h2><button class="icon-button close-dialog" aria-label="关闭">×</button></div><form id="edit-form" class="dialog-body"><label>提示词<textarea id="edit-prompt" rows="8" required></textarea></label><label>指定对白<input id="edit-dialogue"></label><div class="form-grid"><label>时长（4–12秒）<input id="edit-seconds" type="number" min="4" max="12" required></label><label>画幅<select id="edit-aspect"><option>9:16</option><option>16:9</option><option>1:1</option><option>4:3</option><option>3:4</option><option>21:9</option></select></label></div><label>生成模式<select id="edit-mode"><option value="text">文字</option><option value="reference">参考</option><option value="keyframe">首尾帧</option></select></label><label>本次使用的参考素材（Ctrl / Shift 多选）<select id="edit-assets" multiple size="5"></select></label><div class="form-grid"><label>首帧<select id="edit-first"><option value="">不设置</option></select></label><label>尾帧<select id="edit-last"><option value="">不设置</option></select></label></div><label>修订原因<input id="edit-reason" required placeholder="记录实际问题与本次调整"></label><p class="hint">新版本会保留全部历史。若需重新生成，将创建一个新的 API 任务，可能产生费用。</p><button class="button primary" type="submit">保存修订，等待提交</button></form></dialog>
+  <input id="project-import" type="file" accept=".json" hidden><input id="video-import" type="file" accept="video/mp4,video/webm" hidden>
+  <div id="toast-region" role="status" aria-live="polite"></div>
+  <script type="module" src="./src/app.js"></script>
+</body></html>
