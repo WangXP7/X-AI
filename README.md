@@ -122,7 +122,6 @@ python tools/serve.py
 2. 本地仓库已建立。确认私人目录没有进入Git：
 
    ```powershell
-   cd D:\PRIVACY-REDACTED\REDACTED-DIR
    git status
    git ls-files private .local
    ```
