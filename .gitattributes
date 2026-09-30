@@ -1,0 +1,14 @@
+* text=auto eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.py text eol=lf
+*.cmd text eol=crlf
+*.wasm binary
+*.mp4 binary
+*.gz binary
+
+# Preserve exact upstream bytes for the published integrity manifest.
+vendor/** -text

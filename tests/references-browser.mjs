@@ -1,0 +1,68 @@
+import {createRequire} from 'node:module';
+import {mkdir,writeFile,readFile} from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
+import assert from 'node:assert/strict';
+import {sealLocalDefault} from '../src/local-default.js';
+const require=createRequire(import.meta.url);let chromium;try{({chromium}=require('playwright'));}catch{({chromium}=require(process.env.PLAYWRIGHT_PATH));}
+const browser=await chromium.launch({channel:'msedge',headless:true}),context=await browser.newContext({viewport:{width:1450,height:1060}}),page=await context.newPage();
+const out=new URL('../test-results/',import.meta.url);await mkdir(out,{recursive:true});const checks=[],errors=[];let apiCalls=0;
+const testDefault=await sealLocalDefault('sk-synthetic-recursive-suite-not-a-live-key');
+await context.route('**/private/default-access.json',r=>r.fulfill({json:testDefault}));
+await context.route('https://api.agnes-ai.cn/**',r=>{apiCalls++;return r.abort();});page.on('pageerror',e=>errors.push(e.message));
+const project=()=>page.evaluate(async()=>{const {get}=await import('./src/storage.js');return get('state','project');});
+const readReferences=async()=>{
+  await page.locator('#batch-read-assets').click();await page.locator('#asset-operation-dialog').waitFor();
+  await page.locator('#asset-operation-start').click();await page.waitForFunction(()=>document.querySelector('#asset-operation-dialog').getAttribute('aria-busy')==='false'&&!document.querySelector('#asset-operation-progress').hidden);
+  await page.locator('#asset-operation-done').click();
+};
+try{
+  await page.goto('http://127.0.0.1:4173/');await page.waitForFunction(()=>document.documentElement.dataset.ready==='true');
+  await page.evaluate(async()=>{
+    const root=await navigator.storage.getDirectory(),source=await root.getDirectoryHandle('递归引用示例',{create:true}),output=await root.getDirectoryHandle('示例输出',{create:true});
+    const proto=Object.getPrototypeOf(root);proto.queryPermission=async()=> 'granted';proto.requestPermission=async()=> 'granted';
+    const {writeFile,readFile}=await import('./src/storage.js'),{sha256}=await import('./src/core.js');
+    const c=document.createElement('canvas');c.width=720;c.height=1280;const x=c.getContext('2d');x.fillStyle='#806bb2';x.fillRect(0,0,720,1280);x.fillStyle='#f8eecf';x.beginPath();x.arc(360,550,200,0,Math.PI*2);x.fill();
+    await writeFile(source,'images/小熊.png',await new Promise(r=>c.toBlob(r,'image/png')));
+    await writeFile(source,'sounds/参考.m4a',await(await fetch('./tests/fixtures/synthetic.mp4')).blob());
+    window.__csv='镜号,时长秒,提示词文件,对白文件\nA01-01,8,../prompts/shots.json,../voice/lines.json';
+    await writeFile(source,'lists/shots.csv',__csv);
+    await writeFile(source,'prompts/shots.json',JSON.stringify({shots:[{id:'A01-01',prompt:'[动作](parts/action.md#动作)',files:['C01=../images/小熊.png']},{id:'A01-02',prompt:'不属于当前镜头'}]}));
+    await writeFile(source,'prompts/parts/action.md','# 动作\n{{file:../style.txt}}\n小熊缓缓抬头，看向远处的灯火。![角色](../../images/小熊.png) [参考声音](../../sounds/参考.m4a)\n# 其他片段\n不应进入提示词');
+    await writeFile(source,'prompts/style.txt','二维水彩，柔和月光，保持角色的圆润比例。');
+    await writeFile(source,'voice/lines.json',JSON.stringify({shots:[{id:'A01-01',dialogue:{$ref:'line.txt'}}]}));
+    await writeFile(source,'voice/line.txt','我们出发吧。');
+    window.__source=source;window.__output=output;window.showDirectoryPicker=async({id})=>id==='x-ai-input'?source:output;
+    window.__originalHash=await sha256(await readFile(source,'images/小熊.png'));
+    window.__files=async function list(dir,p=''){const all=[];for await(const [name,e]of dir.entries())if(e.kind==='directory')all.push(...await list(e,p+name+'/'));else all.push(p+name);return all;};
+  });
+  await page.locator('#choose-folder').click();await page.waitForFunction(()=>document.querySelector('#directory-desc').textContent.includes('已授权'));
+  await page.locator('#mode-batch').click();await page.locator('#batch-source-folder').click();await page.locator('#batch-source-list').selectOption('lists/shots.csv');
+  await page.waitForFunction(()=>document.querySelector('#batch-input').value.includes('A01-01'));
+  assert.match(await page.locator('#batch-analysis').textContent(),/读取引用并展开/);
+  await page.locator('#add-jobs').click();assert.equal((await project()).jobs.length,0);
+  checks.push('one directory grant finds the CSV; unresolved nested content cannot enter the queue');
+  await readReferences();const p=await project();assert.equal(p.assets.length,2);assert.ok(p.assets.every(a=>a.storage==='source'));assert.equal(await page.locator('#batch-input').inputValue(),await page.evaluate(()=>__csv));
+  assert.match(await page.locator('#batch-text-report').textContent(),/5 个文本文件.*2 处文本替换/);assert.match(await page.locator('#batch-analysis').textContent(),/二维水彩/);
+  const files=await page.evaluate(()=>__files(__output));assert.equal(files.some(f=>f.startsWith('references/')),false);
+  const imageUnchanged=await page.evaluate(async()=>{const {readFile}=await import('./src/storage.js'),{sha256}=await import('./src/core.js');return await sha256(await readFile(__source,'images/小熊.png'))===__originalHash;});assert.ok(imageUnchanged);
+  checks.push('CSV → JSON → Markdown → TXT expands by shot and heading; nested images/audio become references without copying or changing originals');
+  const dl=page.waitForEvent('download');await page.locator('#batch-export-resolved').click();const download=await dl;await download.saveAs(fileURLToPath(new URL('expanded-storyboard.json',out)));const exported=JSON.parse(await readFile(new URL('expanded-storyboard.json',out),'utf8'));
+  assert.equal(exported.documents.length,5);assert.ok(exported.shots[0].textSources.some(s=>s.chain.length===3));assert.match(exported.shots[0].AgnesAI实际提示词,/<Picture 1>.*<Audio 1>/);assert.equal(exported.shots[0].dialogue,'我们出发吧。');assert.ok(!JSON.stringify(exported).includes('不应进入提示词'));
+  checks.push('download contains expanded text, original references, nested source chains and hashes; other shots/headings are excluded');
+  await page.locator('#batch-text-report .reference-replacement').first().locator('summary').click();await page.locator('#batch-text-report').scrollIntoViewIfNeeded();await page.waitForFunction(()=>document.querySelectorAll('#toast-region .toast').length===0);
+  await page.locator('#batch-text-report').screenshot({path:fileURLToPath(new URL('recursive-reference-preview.png',out))});
+  await page.evaluate(async()=>{const {writeFile}=await import('./src/storage.js');await writeFile(__source,'prompts/style.txt','二维水彩，暖色晨光，保持角色的圆润比例。');});
+  await page.locator('#add-jobs').click();await page.waitForFunction(()=>document.querySelector('#batch-analysis').textContent.includes('引用文本已改变'));assert.equal((await project()).jobs.length,0);
+  await readReferences();await page.locator('#add-jobs').click();await page.locator('#queue-view').waitFor();const queued=await project();assert.equal(queued.jobs.length,1);assert.match(queued.jobs[0].prompt,/暖色晨光/);assert.equal(queued.jobs[0].textSources.length,5);
+  const result=await page.evaluate(async()=>{const {get,reportMarkdown}=await import('./src/storage.js'),{Runner}=await import('./src/engine.js'),{validateProjectFile}=await import('./src/core.js');const p=await get('state','project');validateProjectFile(p);const r=new Runner(()=>({project:p,folder:__output}),()=>{},()=>{}),payload=await r.payload(p.jobs[0]);return {prompt:payload.prompt,images:payload.images.length,audios:payload.audios.length,notes:reportMarkdown(p)};});
+  assert.equal(result.images,1);assert.equal(result.audios,1);assert.match(result.prompt,/暖色晨光/);assert.match(result.prompt,/我们出发吧/);assert.match(result.notes,/文本引用来源.*入队快照/s);assert.match(result.notes,/prompts\/shots.json → prompts\/parts\/action.md#动作 → prompts\/style.txt/);
+  checks.push('changed source text blocks stale approval; rereading recovers and the actual request/production notes use the reviewed expanded content');
+  await page.locator('[data-view=studio]').click();await page.evaluate(async()=>{const {writeFile}=await import('./src/storage.js');await writeFile(__source,'prompts/style.txt','@file(parts/action.md#动作)');});
+  await page.locator('#batch-read-assets').click();await page.waitForFunction(()=>document.querySelector('#batch-text-report').textContent.includes('循环引用'));assert.equal(await page.locator('#asset-operation-dialog').isVisible(),false);await page.locator('#add-jobs').click();assert.equal((await project()).jobs.length,1);
+  await page.evaluate(async()=>{const {writeFile}=await import('./src/storage.js');await writeFile(__source,'prompts/style.txt','<img src=x onerror="window.__unsafeExecuted=true">\n二维水彩');});await readReferences();
+  assert.equal(await page.locator('#batch-text-report img').count(),0);assert.equal(await page.evaluate(()=>window.__unsafeExecuted),undefined);assert.match(await page.locator('#batch-text-report').textContent(),/<img src=x/);
+  checks.push('cycles show the failing chain with no partial import; correction recovers, and file contents render as inert escaped text');
+  await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.equal(apiCalls,0);assert.deepEqual(errors,[]);
+  checks.push('mobile layout has no horizontal overflow; no real authentication or paid API requests occurred');
+  await writeFile(new URL('references-results.json',out),JSON.stringify({at:new Date().toISOString(),checks,errors,apiCalls},null,2));console.log(JSON.stringify({passed:checks.length,checks},null,2));
+}finally{await context.close();await browser.close();}
