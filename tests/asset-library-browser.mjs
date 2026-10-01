@@ -17,7 +17,7 @@ await page.addInitScript(()=>{const original=window.createImageBitmap;window.__b
 const done=async()=>{await page.waitForFunction(()=>document.querySelector('#asset-operation-dialog').getAttribute('aria-busy')==='false'&&!document.querySelector('#asset-operation-progress').hidden);};
 const assets=()=>page.evaluate(async()=>{const {get}=await import('./src/storage.js');return (await get('state','project')).assets;});
 try{
-  await page.goto('http://127.0.0.1:4173/');await page.locator('[data-view=assets]').click();
+  await page.goto((process.env.XAI_TEST_URL||'http://127.0.0.1:4173/'));await page.waitForFunction(()=>document.documentElement.dataset.ready==='true');await page.locator('[data-view=assets]').click();
   const pngs=await page.evaluate(async()=>{
     const generate=async(w,h,color,label)=>{const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.fillStyle='#f4ead7';x.fillRect(0,0,w,h);x.fillStyle=color;x.fillRect(12,12,w-24,h-24);x.fillStyle='#ffffff';x.font=`bold ${Math.max(25,Math.round(w/14))}px sans-serif`;x.textAlign='center';x.fillText(label,w/2,Math.min(100,h/5));x.fillText('FULL FRAME',w/2,h/2);x.fillText('BOTTOM',w/2,h-35);return c.toDataURL('image/png').split(',')[1];};
     return {portrait:await generate(720,1280,'#73559b','PORTRAIT'),wide:await generate(1983,793,'#587f87','WIDE REFERENCE'),red:await generate(700,700,'#a25767','RED'),blue:await generate(700,700,'#5275a1','BLUE'),later:await generate(600,900,'#789454','LATER')};
@@ -31,7 +31,7 @@ try{
   await page.evaluate(()=>window.__bitmapCalls=0);
   const file=(name,data)=>({name,mimeType:'image/png',buffer:Buffer.from(data,'base64')});
   const fixture=await readFile(new URL('fixtures/synthetic.mp4',import.meta.url));
-  const files=[file('竖版人物.png',pngs.portrait),file('长条参考板.png',pngs.wide),file('同内容副本.png',pngs.portrait),{name:'损坏.png',mimeType:'image/png',buffer:Buffer.from('broken')},{name:'说明.txt',mimeType:'text/plain',buffer:Buffer.from('not media')},file('同名素材.png',pngs.red),file('同名素材.png',pngs.blue),{name:'参考声音.m4a',mimeType:'audio/mp4',buffer:fixture}];
+  const files=[file('竖版人物.png',pngs.portrait),file('长条参考板.png',pngs.wide),file('竖版人物.png',pngs.portrait),{name:'损坏.png',mimeType:'image/png',buffer:Buffer.from('broken')},{name:'说明.txt',mimeType:'text/plain',buffer:Buffer.from('not media')},file('同名素材.png',pngs.red),file('同名素材.png',pngs.blue),{name:'参考声音.m4a',mimeType:'audio/mp4',buffer:fixture}];
   await page.locator('#library-files').setInputFiles(files);await page.locator('#asset-operation-dialog').waitFor();
   assert.equal((await assets()).length,0);assert.equal(await page.evaluate(()=>window.__bitmapCalls),0);
   const plan=await page.locator('#asset-check-list').innerText();for(const value of ['15MB','256–5760','0.4–2.5','SHA-256','2–12','5 张'])assert.ok(plan.includes(value));
@@ -58,16 +58,16 @@ try{
   let current=await assets();assert.equal(current.length,9);
   for(const a of originals)assert.equal(current.find(x=>x.id===a.id).sha256,a.sha256);
   const derived=current.filter(a=>a.derivedFrom);assert.equal(derived.length,4);assert.ok(derived.every(a=>a.errors.length===0));assert.ok(derived.every(a=>a.width/a.height<=2.5&&a.width/a.height>=.4));
-  assert.ok(await page.locator('#asset-operation-download-results').isVisible());await page.locator('#asset-operation-select-results').click();assert.equal(await page.locator('#asset-selection-count').textContent(),'已选 4 / 9 项');await page.locator('#assets-clear-selection').click();for(const a of originals)await page.locator(`[data-pick-asset="${a.id}"]`).check();await page.locator('#assets-batch-optimize').click();await page.locator('#asset-operation-start').click();await done();assert.equal((await assets()).length,9);assert.equal(await page.locator('#asset-operation-results .duplicate').count(),4);
+  assert.ok(await page.locator('#asset-operation-download-results').isVisible());await page.locator('#asset-operation-select-results').click();assert.equal(await page.locator('#asset-selection-count').textContent(),'已选 4 / 5 项');await page.locator('#assets-clear-selection').click();await page.locator('#assets-version-filter').selectOption('original');for(const a of originals)await page.locator(`[data-pick-asset="${a.id}"]`).check();await page.locator('#assets-batch-optimize').click();await page.locator('#asset-operation-start').click();await done();assert.equal((await assets()).length,9);assert.equal(await page.locator('#asset-operation-results .duplicate').count(),4);
   checks.push('batch optimization preserves original hashes, skips audio, revalidates four image derivatives and reuses previous results on retry');
-  await page.locator('#asset-operation-done').click();await page.locator('#assets-select-all').check();
+  await page.locator('#asset-operation-done').click();await page.locator('#assets-version-filter').selectOption('all');await page.locator('#assets-select-all').check();
   const downloaded=page.waitForEvent('download');await page.locator('#assets-batch-download').click();const zip=await downloaded;await done();await zip.saveAs(fileURLToPath(new URL('assets-batch.zip',out)));
   assert.ok(await page.locator('#asset-download-ready').isVisible());assert.equal(await page.locator('#asset-operation-results .success').count(),9);await writeFile(new URL('assets-zip-expected.json',out),JSON.stringify(await assets()));
   checks.push('batch download creates one ZIP with unique filenames and a source/hash manifest; a second download button remains available');
   await page.locator('#asset-operation-done').click();
   await page.locator('#library-files').setInputFiles([file('继续测试1.png',pngs.later),file('继续测试2.png',pngs.red),file('继续测试3.png',pngs.blue)]);await page.locator('#asset-operation-start').click();await page.waitForFunction(()=>document.querySelector('#asset-progress-phase').textContent.includes('解码图片'));await page.locator('#asset-operation-stop').click();await done();
   assert.ok((await page.locator('#asset-progress-phase').textContent()).includes('已停止'));assert.ok(await page.locator('#asset-operation-resume').isVisible());const partial=await page.locator('#asset-progress-count').textContent();assert.equal(partial,'1 / 3');
-  await page.locator('#asset-operation-resume').click();await done();assert.equal(await page.locator('#asset-progress-count').textContent(),'2 / 2');assert.equal((await assets()).length,10);
+  await page.locator('#asset-operation-resume').click();await done();assert.equal(await page.locator('#asset-progress-count').textContent(),'2 / 2');assert.equal((await assets()).length,12);
   checks.push('stop finishes only the current file; resume processes remaining files and preserves completed results');
   await page.locator('#asset-operation-done').click();await page.setViewportSize({width:390,height:844});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.screenshot({path:fileURLToPath(new URL('assets-mobile.png',out)),fullPage:true});

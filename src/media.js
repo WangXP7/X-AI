@@ -1,15 +1,22 @@
-import {uid,sha256,DIMENSIONS,safeName} from './core.js';
-import {storeBlob,blob,readAsset} from './storage.js';
+import {uid,sha256,DIMENSIONS} from './core.js';
+import {storeBlob,blob,readAsset,freshSource} from './storage.js';
+import {sourceMetadata} from './asset-source.js';
 export function dataURL(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(r.error);r.readAsDataURL(file);});}
 function metadata(file,type){return new Promise((resolve,reject)=>{const el=document.createElement(type),url=URL.createObjectURL(file);let timer=setTimeout(()=>finish(Error('无法读取媒体信息，请转换为常见格式后导入。')),15000);const finish=(err)=>{clearTimeout(timer);const info={duration:el.duration,width:el.videoWidth,height:el.videoHeight};el.removeAttribute('src');el.load();URL.revokeObjectURL(url);err?reject(err):resolve(info);};el.preload='metadata';el.onloadedmetadata=()=>finish(Number.isFinite(el.duration)&&el.duration>0?null:Error('媒体时长无法识别。'));el.onerror=()=>finish(Error('此浏览器无法解码文件，请转为 MP4/H.264 或 WAV/MP3。'));el.src=url;});}
 export async function importAsset(file,extra={},onProgress=()=>{}){
+  extra=sourceMetadata(file,extra);
+  try{file=await freshSource(file,extra);}catch(e){e.xaiOperation='source-read';throw e;}
   onProgress('检查文件类型与大小');
   const image=/\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file.name)||file.type.startsWith('image/');
   const audio=/\.(wav|mp3|m4a|ogg|flac|aac)$/i.test(file.name)||file.type.startsWith('audio/');
   if(!image&&!audio)throw Error(`${file.name}：不支持此素材类型。`);
   if(file.size>150_000_000)throw Error('单个素材超过150MB，请先使用本地编辑器缩小。');
+  onProgress('读取原文件，固定本次校验内容');
+  try{file=new File([await file.arrayBuffer()],file.name,{type:file.type,lastModified:file.lastModified});}
+  catch(e){e.xaiOperation='source-read';throw e;}
   onProgress('计算文件指纹，准备查重');
-  const asset={id:uid(),kind:image?'image':'audio',name:extra.storage==='source'?file.name:safeName(file.name),type:file.type,bytes:file.size,sha256:await sha256(file),errors:[],...extra};
+  if(!file.name||file.name.length>240||/[<>:"/\\|?*\x00-\x1f]/.test(file.name)||/[. ]$/.test(file.name))throw Error('素材文件名无法安全保存，请在原目录修改文件名并同步清单引用后重新导入。');
+  const asset={id:uid(),kind:image?'image':'audio',name:file.name,type:file.type,bytes:file.size,sha256:await sha256(file),errors:[],...extra};
   if(file.size>=15_000_000)asset.errors.push('文件须小于15MB，请使用尺寸优化或声音裁切');
   if(image){onProgress('解码图片，检查尺寸与比例');let bitmap;try{bitmap=await createImageBitmap(file);}catch{throw Error(`${file.name}：图片损坏或浏览器不支持。`);}asset.width=bitmap.width;asset.height=bitmap.height;bitmap.close();
     if(!/\.(png|jpe?g|webp)$/i.test(file.name))asset.errors.push('需转换为 PNG / JPEG / WebP');
@@ -17,19 +24,19 @@ export async function importAsset(file,extra={},onProgress=()=>{}){
     if(asset.width/asset.height<.4||asset.width/asset.height>2.5)asset.errors.push('宽高比须在0.4–2.5之间，可添加边距生成新参考');
   }else{onProgress('读取声音，检查可播放性与时长');const info=await metadata(file,'audio');asset.duration=info.duration;}
   onProgress('保存浏览器本地副本');
-  asset.blobKey='asset:'+asset.id;asset.path=extra.storage==='source'?extra.sources[0].path:'references/'+asset.sha256.slice(0,12)+'_'+asset.name;await storeBlob(asset.blobKey,file);return asset;
+  asset.blobKey='asset:'+asset.id;asset.path=extra.storage==='source'?extra.sources[0].path:'references/optimized/'+extra.derivedFrom+'/'+asset.id+'/'+asset.name;await storeBlob(asset.blobKey,file);return asset;
 }
 export async function optimizeImage(asset,portrait=false){
+  if(!/\.(png|jpe?g|webp)$/i.test(asset.name))throw Error('保持同名时无法将此格式转换为 PNG / JPEG / WebP。请用图像工具转换原素材，并同步清单中的文件后缀后重新导入。');
   const original=await readAsset(asset),bitmap=await createImageBitmap(original);let w=bitmap.width,h=bitmap.height;
   if(portrait){w=720;h=1280;}else{const factor=Math.min(1,2048/Math.max(w,h));w=Math.max(256,Math.round(w*factor));h=Math.max(256,Math.round(h*factor));if(w/h>2.5)h=Math.ceil(w/2.5);if(w/h<.4)w=Math.ceil(h*.4);}
   const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;const ctx=canvas.getContext('2d');ctx.fillStyle='#ece9e3';ctx.fillRect(0,0,w,h);
   const fit=Math.min(w/bitmap.width,h/bitmap.height);ctx.drawImage(bitmap,(w-bitmap.width*fit)/2,(h-bitmap.height*fit)/2,bitmap.width*fit,bitmap.height*fit);bitmap.close();
-  const sourceLinked=asset.storage==='source';
-  const type=sourceLinked&&/\.png$/i.test(asset.name)?'image/png':sourceLinked&&/\.webp$/i.test(asset.name)?'image/webp':'image/jpeg';
-  const name=sourceLinked&&/\.(png|jpe?g|webp)$/i.test(asset.name)?asset.name:asset.name.replace(/\.[^.]+$/,'')+(sourceLinked?'':portrait?'_竖屏参考':'_优化')+'.jpg';
+  const type=/\.png$/i.test(asset.name)?'image/png':/\.webp$/i.test(asset.name)?'image/webp':'image/jpeg',name=asset.name;
   const file=await new Promise(r=>canvas.toBlob(r,type,.92));if(!file)throw Error('图片转换失败，请缩小原图后再试。');
-  const result=await importAsset(new File([file],name,{type}),{derivedFrom:asset.id,transform:sourceLinked?'等比缩放与补边；保留原路径，优化版同名另存':portrait?'等比完整置入720×1280画布，新增边距；须复核是否被生成模型复制':'等比缩放、尺寸补边、JPEG转换；原文件保留'});
-  if(sourceLinked)result.path='references/'+name;return result;
+  if(file.type!==type)throw Error('浏览器无法编码为原文件格式，请使用图像工具生成同名优化版本。');
+  const result=await importAsset(new File([file],name,{type}),{derivedFrom:asset.id,transform:portrait?'等比完整置入720×1280画布；同名另存，须复核边距':'等比缩放与补边；保留格式与文件名，原文件保留'});
+  result.path='references/optimized/'+asset.id+'/'+result.id+'/'+name;return result;
 }
 function wav(buffer,start,end){
   const rate=buffer.sampleRate,n=Math.round((end-start)*rate),offset=Math.floor(start*rate),arr=new ArrayBuffer(44+n*2),d=new DataView(arr);const str=(p,s)=>[...s].forEach((c,i)=>d.setUint8(p+i,c.charCodeAt(0)));str(0,'RIFF');d.setUint32(4,36+n*2,true);str(8,'WAVE');str(12,'fmt ');d.setUint32(16,16,true);d.setUint16(20,1,true);d.setUint16(22,1,true);d.setUint32(24,rate,true);d.setUint32(28,rate*2,true);d.setUint16(32,2,true);d.setUint16(34,16,true);str(36,'data');d.setUint32(40,n*2,true);
@@ -39,8 +46,8 @@ export async function trimAudio(asset,start,end){
   if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start||end>asset.duration+.01||end-start>12)throw Error('请选择有效的开始、结束时间，截取长度不能超过12秒。');
   const context=new AudioContext({sampleRate:48000});
   try{
-    const buffer=await context.decodeAudioData(await(await readAsset(asset)).arrayBuffer());let result=wav(buffer,start,Math.min(end,buffer.duration)),name=asset.name.replace(/\.[^.]+$/,'')+`_${start}-${end}秒.wav`,type='audio/wav';
-    if(asset.storage==='source'){
+    const buffer=await context.decodeAudioData(await(await readAsset(asset)).arrayBuffer());let result=wav(buffer,start,Math.min(end,buffer.duration)),name=asset.name,type='audio/wav';
+    {
       name=asset.name;const ext=name.split('.').at(-1).toLowerCase();
       const codecs={mp3:['libmp3lame','audio/mpeg'],m4a:['aac','audio/mp4'],aac:['aac','audio/aac'],ogg:['libvorbis','audio/ogg'],flac:['flac','audio/flac']};
       if(ext!=='wav'){
@@ -49,7 +56,7 @@ export async function trimAudio(asset,start,end){
         result=await serialFF(async f=>{const src=uid()+'.wav',dst=uid()+'.'+ext;try{await f.writeFile(src,new Uint8Array(await input.arrayBuffer()));const code=await f.exec(['-v','error','-i',src,'-c:a',codecs[ext][0],dst],120000);if(code!==0)throw Error('声音编码失败，请使用音频工具裁切为相同格式后重新导入。');return new Blob([await f.readFile(dst)],{type});}finally{await f.deleteFile(src).catch(()=>{});await f.deleteFile(dst).catch(()=>{});}});
       }
     }
-    const output=await importAsset(new File([result],name,{type}),{derivedFrom:asset.id,transform:`截取${start}–${end}秒；原文件保留，不补写或伪造对白`});if(asset.storage==='source')output.path='references/'+name;return output;
+    const output=await importAsset(new File([result],name,{type}),{derivedFrom:asset.id,transform:`截取${start}–${end}秒；同名另存，原文件保留，不补写或伪造对白`});output.path='references/optimized/'+asset.id+'/'+output.id+'/'+name;return output;
   }finally{await context.close();}
 }
 async function seek(video,t){await new Promise((resolve,reject)=>{if(Math.abs(video.currentTime-t)<.01&&video.readyState>=2)return resolve();const timer=setTimeout(()=>reject(Error('抽帧超时，请使用深度校验。')),12000);video.onseeked=()=>{clearTimeout(timer);resolve();};video.currentTime=t;});}

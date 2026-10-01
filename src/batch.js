@@ -84,13 +84,13 @@ export function findAsset(reference,assets,{sourceId,csvPath}={}){
   let found=assets.filter(a=>a.id===target);if(found.length===1)return found[0];
   const isPath=/[\/\\]/.test(target);
   if(sourceId&&csvPath&&(isPath||/\.[a-z0-9]{2,5}$/i.test(target))){const path=resolveSourcePath(csvPath,target).toLowerCase();found=assets.filter(a=>a.sources?.some(s=>s.root===sourceId&&pathKey(s.path).toLowerCase()===path));}
-  else if(isPath)found=assets.filter(a=>pathKey(a.path)===value||a.sources?.some(s=>s.path===value));
+  else if(isPath)found=assets.filter(a=>pathKey(a.path)===value||a.sources?.some(s=>s.path===value)||a.aliases?.includes(target));
   else{
     found=assets.filter(a=>a.name===target||a.aliases?.includes(target));
     if(!found.length&&/^[a-z]+\d+[a-z]?$/i.test(target))found=assets.filter(a=>new RegExp('^'+target+'(?:[_ .-]|$)','i').test(a.name));
     if(sourceId){const scoped=found.filter(a=>a.sources?.some(s=>s.root===sourceId));if(scoped.length)found=scoped;}
   }
-  found=found.filter(a=>!found.some(original=>original.effectiveAssetId===a.id&&a.derivedFrom===original.id));
+  found=found.filter(a=>!a.derivedFrom||!found.some(original=>original.id===a.derivedFrom));
   if(found.length>1)throw Error(`素材“${target}”对应多个文件，请改用明确的素材 ID 或相对路径。`);
   return found[0]||null;
 }
@@ -100,7 +100,7 @@ export function batchReferences(row){
   const images=pick(row,'images',{includeEmpty:true}),audio=pick(row,'audio',{includeEmpty:true});
   return images===undefined&&audio===undefined?null:[...(referenceList(images)||[]),...(referenceList(audio)||[])];
 }
-export function effectiveAsset(asset,assets){return assets.find(a=>a.id===asset?.effectiveAssetId&&!a.errors?.length)||asset;}
+export function effectiveAsset(asset,assets){const visited=new Set();while(asset?.effectiveAssetId&&!visited.has(asset.id)){visited.add(asset.id);const next=assets.find(a=>a.id===asset.effectiveAssetId&&!a.errors?.length);if(!next||visited.has(next.id))break;asset=next;}return asset;}
 export function parseBatch(text,defaults,assets,options={}){
   const info=inspectBatch(text),groups=new Map();if(options.rows)info.rows=options.rows;
   return info.rows.map((r,i)=>{

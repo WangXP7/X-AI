@@ -16,7 +16,7 @@ const readReferences=async()=>{
   await page.locator('#asset-operation-done').click();
 };
 try{
-  await page.goto('http://127.0.0.1:4173/');await page.waitForFunction(()=>document.documentElement.dataset.ready==='true');
+  await page.goto((process.env.XAI_TEST_URL||'http://127.0.0.1:4173/'));await page.waitForFunction(()=>document.documentElement.dataset.ready==='true');
   await page.evaluate(async()=>{
     const root=await navigator.storage.getDirectory(),source=await root.getDirectoryHandle('递归引用示例',{create:true}),output=await root.getDirectoryHandle('示例输出',{create:true});
     const proto=Object.getPrototypeOf(root);proto.queryPermission=async()=> 'granted';proto.requestPermission=async()=> 'granted';

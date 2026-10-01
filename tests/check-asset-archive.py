@@ -18,5 +18,6 @@ with zipfile.ZipFile(root / 'assets-batch.zip') as archive:
         data = archive.read(asset['archiveName'])
         assert hashlib.sha256(data).hexdigest() == by_id[asset['id']]['sha256']
         assert asset['sha256'] == by_id[asset['id']]['sha256']
-        assert '/' not in asset['archiveName'] and '\\' not in asset['archiveName']
+        assert asset['archiveName'].split('/')[-1] == by_id[asset['id']]['name']
+        assert '..' not in asset['archiveName'].split('/') and '\\' not in asset['archiveName']
 print(f'ZIP verified: {len(expected)} media files, unique UTF-8 names, original SHA-256, all CRCs passed.')

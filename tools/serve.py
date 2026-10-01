@@ -1,11 +1,10 @@
 """Serve static X-AI files on loopback. No API key or user media handling."""
 import argparse
 import functools
+import json
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-from pathlib import Path
 from urllib.parse import unquote, urlsplit
-
-ROOT = Path(__file__).resolve().parent.parent
+from local_runtime import ROOT, server_identity
 
 class Handler(SimpleHTTPRequestHandler):
     prefix = ''
@@ -19,6 +18,14 @@ class Handler(SimpleHTTPRequestHandler):
         parts = unquote(urlsplit(self.path).path).split('/')
         if any(p in {'.git', '.local', '__pycache__', 'test-results'} or p.startswith('.local-') for p in parts):
             self.send_error(404)
+            return
+        if urlsplit(self.path).path == '/__xai_health':
+            body = json.dumps(server_identity()).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         super().do_GET()
 

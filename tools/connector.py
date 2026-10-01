@@ -23,6 +23,24 @@ ORIGINS = {'https://api.agnes-ai.cn', 'https://apihub.agnes-ai.com'}
 API_LOCK = threading.Lock()
 RATE_FILE = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'X-AI' / 'connector-rate.json'
 
+def local_page_origins(root=None, extra_port=None):
+    root = Path(root) if root is not None else Path(__file__).resolve().parent.parent
+    ports = {4173}
+    try:
+        state = json.loads((root / '.local' / 'startup.json').read_text(encoding='utf-8'))
+        expected = hashlib.sha256(os.path.normcase(str(root.resolve())).encode('utf-8')).hexdigest()
+        if isinstance(state,dict) and state.get('app') == 'x-ai-video-studio' and state.get('workspace') == expected:
+            port = state.get('port')
+            if type(port) is int and 1024 <= port <= 65535:
+                ports.add(port)
+    except (OSError,ValueError):
+        pass
+    if extra_port is not None:
+        if type(extra_port) is not int or not 1024 <= extra_port <= 65535:
+            raise ValueError('Local page port must be between 1024 and 65535')
+        ports.add(extra_port)
+    return {f'http://{host}:{port}' for host in ('127.0.0.1','localhost') for port in ports}
+
 def valid_media_url(url):
     p = urllib.parse.urlsplit(url)
     if p.scheme != 'https' or p.username or p.password or not p.hostname or p.port not in (None,443):
@@ -145,8 +163,12 @@ class Handler(BaseHTTPRequestHandler):
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--origin',action='append',default=[],help='Exact Pages origin, e.g. https://yourname.github.io (no repository path)')
+    parser.add_argument('--local-port',type=int,help='Additional local static page port, if not launched by launch.py')
     args=parser.parse_args()
-    allowed={'http://127.0.0.1:4173','http://localhost:4173'}
+    try:
+        allowed=local_page_origins(extra_port=args.local_port)
+    except ValueError as error:
+        parser.error(str(error))
     for origin in args.origin:
         p=urllib.parse.urlsplit(origin)
         if p.scheme!='https' or not p.hostname or p.path not in ('','/') or p.query or p.username:

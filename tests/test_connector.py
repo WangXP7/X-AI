@@ -1,5 +1,9 @@
 import importlib.util
+import hashlib
+import json
+import os
 from pathlib import Path
+import tempfile
 import threading
 import unittest
 from unittest.mock import patch
@@ -45,5 +49,30 @@ class ConnectorTests(unittest.TestCase):
             with self.assertRaises(ValueError):connector.valid_media_url(url)
         with patch('socket.getaddrinfo',return_value=[(2,1,6,'',('127.0.0.1',443))]):
             with self.assertRaises(ValueError):connector.valid_media_url('https://example.com/a.mp4')
+
+    def test_launcher_port_is_an_exact_allowed_origin(self):
+        with tempfile.TemporaryDirectory(prefix='x-ai-connector-origin-') as directory:
+            root=Path(directory);(root/'.local').mkdir()
+            identity=hashlib.sha256(os.path.normcase(str(root.resolve())).encode()).hexdigest()
+            state={'app':'x-ai-video-studio','workspace':identity,'port':4183}
+            (root/'.local/startup.json').write_text(json.dumps(state))
+            allowed=connector.local_page_origins(root)
+            self.assertIn('http://127.0.0.1:4183',allowed)
+            self.assertNotIn('http://127.0.0.1:4184',allowed)
+            state['workspace']='other-project'
+            (root/'.local/startup.json').write_text(json.dumps(state))
+            self.assertNotIn('http://127.0.0.1:4183',connector.local_page_origins(root))
+
+    def test_malformed_launcher_state_keeps_default_and_explicit_local_port(self):
+        with tempfile.TemporaryDirectory(prefix='x-ai-connector-origin-') as directory:
+            root=Path(directory);(root/'.local').mkdir()
+            (root/'.local/startup.json').write_text('{invalid')
+            allowed=connector.local_page_origins(root,49000)
+            self.assertIn('http://127.0.0.1:4173',allowed)
+            self.assertIn('http://127.0.0.1:49000',allowed)
+            self.assertNotIn('https://evil.test',allowed)
+
+    def test_invalid_local_port_is_rejected(self):
+        with self.assertRaises(ValueError):connector.local_page_origins(extra_port=80)
 
 if __name__=='__main__':unittest.main()

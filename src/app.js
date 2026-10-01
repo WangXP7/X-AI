@@ -1,15 +1,18 @@
 import {DIMENSIONS,LABELS,now,uid,escapeHTML as h,safeID,sha256,redact,validateJob,parseBatch,newJob,recordEvent,friendlyError,requestPrompt,validateProjectFile,makeProject,safeExternalURL} from './core.js';
-import {get,put,remove,loadProject,getFolder,chooseFolder,permitted,blob,storeBlob,readFile,writeFile,saveProject,downloadFile,reportMarkdown,existingProject,restoreProjectFiles,backupReferences,writeAssetFile} from './storage.js';
+import {get,put,remove,loadProject,getFolder,chooseFolder,chooseMediaFiles,permitted,blob,storeBlob,readFile,writeFile,saveProject,downloadFile,reportMarkdown,existingProject,restoreProjectFiles,backupReferences,writeAssetFile} from './storage.js';
 import {trimAudio,deepCheck} from './media.js';
 import {Runner} from './engine.js';
 import {CredentialsPanel} from './credentials.js';
 import {AssetLibrary} from './assets.js';
 import {BatchPanel} from './batch-panel.js';
 import {effectiveAsset} from './batch.js';
+import {ensureStudios,activeStudio,createStudio,studioAssets,currentStudioAssets,matchPromptAssets} from './studio.js';
+import {installPlaybackController} from './playback.js';
 
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 let project,folder,runner,credentials,assetLibrary,batchPanel,batchMode=false,selected=[],batchSelected=[],exclusive=false,currentEdit=null,importTarget=null,renderId=0,queueLimit=60,selectedView='studio',directoryBusy=false;
 const urls=new Map();
+const playback=installPlaybackController();
 function toast(text,error=false){
   const dialog=$$('dialog[open]').at(-1);
   if(dialog?.id==='settings-dialog'&&credentials){credentials.feedback(text,error?'error':'info');return;}
@@ -19,11 +22,14 @@ function toast(text,error=false){
 }
 function run(fn){return async event=>{try{if(!exclusive)throw Error('另一个X-AI页面已打开。请关闭另一页后刷新本页，避免多个队列同时运行。');await fn(event);}catch(e){toast(friendlyError(e),true);}};}
 function on(id,event,fn){$(id).addEventListener(event,run(fn));}
-async function save(){await saveProject(project,folder);await render();}
+const draftFields=['shot-id','episode','prompt','generation-mode','seconds','aspect','dialogue','seed','first-frame','last-frame','batch-input','batch-seconds','batch-aspect','batch-episode','batch-id-prefix'];
+let draftTimer;
+function captureDraft(){if(!project?.studios)return;activeStudio(project).draft={batchMode,fields:Object.fromEntries(draftFields.map(id=>[id,$('#'+id).value])),selected:[...selected],batchSelected:[...batchSelected],continuity:$('#continuity').checked};}
+async function save(){captureDraft();await saveProject(project,folder);await render();}
 function event(kind,message,id){recordEvent(project,kind,message,id);}
 async function localURL(key){if(!urls.has(key))urls.set(key,URL.createObjectURL(await blob(key)));return urls.get(key);}
 function clearURL(key){if(urls.has(key)){URL.revokeObjectURL(urls.get(key));urls.delete(key);}}
-function view(name){selectedView=name;$$('.view').forEach(v=>v.hidden=v.id!==name+'-view');$$('.nav[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===name));$('#view-label').textContent={studio:'创作工作台',queue:'任务与成片',assets:'本地素材库',guide:'操作指南'}[name];if(name==='assets')renderAssets();window.scrollTo({top:0,behavior:'instant'});}
+function view(name){playback.pauseAll();selectedView=name;$$('.view').forEach(v=>v.hidden=v.id!==name+'-view');$$('.nav[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===name));$('#view-label').textContent={studio:'创作工作台',queue:'任务与成片',assets:'本地素材库',guide:'操作指南'}[name];if(name==='assets')renderAssets();window.scrollTo({top:0,behavior:'instant'});}
 function updateConnection(){const enabled=!!runner.transport.key;$('#key-dot').classList.toggle('on',enabled);$('#connection-status').classList.toggle('connected',enabled);$('#connection-status').innerHTML='<i></i>'+(enabled?(credentials?.activeLabel||'密钥')+'已启用':'未启用密钥');$('#connection-status').title=enabled?'已启用密钥，不代表 API 连接已验证。打开连接设置可检查。':'点击设置默认密钥或自己的密钥';}
 
 async function showSettings(){$('#connection-mode').value=project.settings.connection;$('#api-origin').value=project.settings.origin;$('#request-gap').value=project.settings.gap;$('#bridge-settings').hidden=project.settings.connection!=='bridge';await credentials.open();}
@@ -34,17 +40,18 @@ function activeReferences(){return batchMode?batchSelected:selected;}
 function updateBatchDefaultsSummary(){const d=batchDefaults();$('#batch-defaults-summary').textContent=`${d.seconds} 秒 · ${d.aspect} · ${d.episode} · ${batchSelected.length?batchSelected.length+' 项共用素材':'无共用素材'}`;}
 function updateMode(){const keyframe=$('#generation-mode').value==='keyframe';$('#keyframe-fields').hidden=!keyframe;if(!keyframe){$('#first-frame').value='';$('#last-frame').value='';}}
 async function renderSelected(){
-  const effective=ids=>ids.map(id=>effectiveAsset(project.assets.find(a=>a.id===id),project.assets)?.id||id);
-  selected=effective(selected);batchSelected=effective(batchSelected);$('#studio-library-count').textContent=project.assets.length;
+  const effective=ids=>[...new Set(ids.map(id=>{const asset=project.assets.find(a=>a.id===id),original=project.assets.find(a=>a.id===asset?.derivedFrom);return effectiveAsset(original?.effectiveAssetId?original:asset,project.assets)?.id||id;}))];
+  selected=effective(selected);batchSelected=effective(batchSelected);$('#studio-library-count').textContent=currentStudioAssets(project).length;
   for(const [mode,ids,target] of [['single',selected,'selected-assets'],['batch',batchSelected,'batch-selected-assets']]){
     const items=ids.map(id=>project.assets.find(a=>a.id===id)).filter(Boolean);
     $('#'+target).innerHTML=items.map(a=>`<div class="asset-chip">${a.kind==='image'?`<img data-asset-thumb="${a.id}" alt="">`:'♫'}<span>${h(a.name.length>25?a.name.slice(0,22)+'…':a.name)}</span><button type="button" data-unselect="${a.id}" data-reference-mode="${mode}" aria-label="移除参考素材">×</button></div>`).join('');
   }
   for(const el of $$('[data-asset-thumb]')){const a=project.assets.find(a=>a.id===el.dataset.assetThumb);el.src=await localURL(a.blobKey);}
-  for(const id of ['first-frame','last-frame']){const old=$('#'+id).value;$('#'+id).innerHTML='<option value="">不设置</option>'+project.assets.filter(a=>a.kind==='image').map(a=>`<option value="${a.id}">${h(a.name)}</option>`).join('');$('#'+id).value=old;}
+  for(const id of ['first-frame','last-frame']){const old=$('#'+id).value;$('#'+id).innerHTML='<option value="">不设置</option>'+currentStudioAssets(project).filter(a=>a.kind==='image').map(a=>`<option value="${a.id}">${h(a.name)}</option>`).join('');$('#'+id).value=effectiveAsset(project.assets.find(a=>a.id===old),project.assets)?.id||old;}
   updateBatchDefaultsSummary();
 }
 async function importFiles(files,reference=true){assetLibrary.planImport(files,{reference});}
+async function pickAssets(reference=false){ensureIdle();try{const picked=await chooseMediaFiles();if(picked)assetLibrary.planImport(picked.files,{metadata:picked.metadata,reference});else $('#'+(reference?'asset-files':'library-files')).click();}catch(e){if(e.name!=='AbortError')throw e;}}
 async function useReferences(ids,{importing=false}={}){
   const next=[...new Set([...activeReferences(),...ids].map(id=>effectiveAsset(project.assets.find(a=>a.id===id),project.assets)?.id||id))],assets=next.map(id=>project.assets.find(a=>a.id===id)).filter(Boolean);
   const images=assets.filter(a=>a.kind==='image'),audios=assets.filter(a=>a.kind==='audio');
@@ -55,6 +62,7 @@ async function useReferences(ids,{importing=false}={}){
   }
   if(batchMode){batchSelected=next;$('#batch-defaults').open=true;}else{selected=next;$('#generation-mode').value='reference';updateMode();}
   await renderSelected();await renderAssets();
+  captureDraft();await saveProject(project,folder);
   if(!importing)toast(batchMode?`已设为批量共用素材，仅补齐未写素材列的分镜。`:`已将 ${ids.length} 项素材用于当前分镜。`);
   return '';
 }
@@ -63,13 +71,13 @@ async function render(){
   if(!project)return;const id=++renderId,ready=project.jobs.filter(j=>['ready','approved'].includes(j.state)).length,total=project.jobs.length;$('#nav-count').textContent=total;$('#ready-count').textContent=String(ready).padStart(2,'0');$('#total-count').textContent=String(total).padStart(2,'0');$('#overall-progress').style.width=(total?ready/total*100:0)+'%';
   if(!folder){$('#directory-name').textContent='连接一个本地文件夹';$('#directory-desc').textContent='素材、视频和记录保存在本地';$('#restore-folder').hidden=true;}
   if(folder){$('#directory-name').textContent=folder.name;const granted=await permitted(folder);$('#directory-desc').textContent=granted?'已授权 · 文件自动保存到此目录':'文件夹已记住，开始前请重新授权。';$('#restore-folder').hidden=granted;}
-  $('#directory-details').hidden=!folder;if(folder){$('#directory-location-label').textContent=folder.name+' /';$('#directory-path-note').textContent='保存到你刚选择的 '+folder.name+' 文件夹。浏览器不提供完整盘符路径；如需确认，请点击“选择文件夹”查看系统选择窗口。';}$('#studio-library-count').textContent=project.assets.length;
-  $('#workspace-pending').textContent=total-ready;$('#workspace-ready').textContent=`${ready} / ${total}`;$('#workspace-assets').textContent=project.assets.length;
+  $('#directory-details').hidden=!folder;if(folder){$('#directory-location-label').textContent=folder.name+' /';$('#directory-path-note').textContent='保存到你刚选择的 '+folder.name+' 文件夹。浏览器不提供完整盘符路径；如需确认，请点击“选择文件夹”查看系统选择窗口。';}$('#studio-library-count').textContent=currentStudioAssets(project).length;
+  $('#studio-project-name').textContent=activeStudio(project).name;$('#workspace-pending').textContent=total-ready;$('#workspace-ready').textContent=`${ready} / ${total}`;$('#workspace-assets').textContent=currentStudioAssets(project).length;
   const active=project.jobs.find(j=>['submitting','queued','generating','deferred','checking','download','unknown','blocked'].includes(j.state));const mini=active?[active,...project.jobs.filter(j=>j!==active).slice(-2).reverse()]:project.jobs.slice(-3).reverse();
   $('#mini-jobs').innerHTML=mini.length?mini.map(j=>`<div class="mini-row"><span class="mini-icon">${['ready','approved'].includes(j.state)?'▷':'◌'}</span><div><strong>${h(j.id)} <small>${j.seconds}s · ${h(j.episode)}</small></strong></div><span class="status ${j.state}">${LABELS[j.state]||h(j.state)}</span></div>`).join(''):'<div class="empty-mini"><span>◌</span><p>下一部作品，从第一镜开始。</p></div>';
   $('#start-queue').textContent=runner.running?'队列运行中':'开始 / 继续队列 ▶';$('#pause-queue').textContent=runner.pauseNew?'已暂停新提交':'暂停新提交';$('#queue-notice').textContent=active?`${active.id} · ${LABELS[active.state]}${active.error?' · '+active.error:''}`:ready?`已有 ${ready}/${total} 镜通过技术校验。内容审核和整集审核仍需你确认。`:'关闭页面会暂停本地追踪；恢复后查询原任务，不重复创建。';$('#queue-notice').classList.toggle('error',active?.state==='unknown'||active?.state==='blocked');
   const filter=$('#queue-filter').value;let jobs=project.jobs.filter(j=>filter==='all'||filter==='ready'&&['ready','approved'].includes(j.state)||filter==='pending'&&['pending','invalid','deferred'].includes(j.state)||filter==='active'&&['submitting','queued','generating','download','checking'].includes(j.state)||filter==='attention'&&['unknown','blocked','failed','needs_redo','invalid'].includes(j.state));
-  const allCount=jobs.length;jobs=jobs.slice(0,queueLimit);$('#jobs-grid').innerHTML=jobs.length?jobs.map(j=>`<article class="job-card"><div class="job-preview">${j.current?.blobKey?`<video data-video="${h(j.current.blobKey)}" controls playsinline preload="none"></video>`:`<span>${['queued','generating'].includes(j.state)?'◌':'▷'}</span><small>${h(j.seconds)} SEC / ${h(j.aspect)}</small>`}</div><div class="job-card-body"><div class="job-card-head"><h3>${h(j.id)}</h3><span class="status ${j.state}">${LABELS[j.state]||h(j.state)}</span></div><p class="job-prompt">${h(j.prompt)}</p><div class="job-meta"><span>${h(j.episode)}</span><span>${j.seconds} 秒</span><span>${h(j.aspect)}</span><span>V${j.attempts.length||1}</span></div>${j.error?`<div class="job-error">${h(j.error)}</div>`:''}<div class="job-actions"><button class="button secondary" data-detail="${j.uid}">详情与操作 ↗</button>${j.current?`<button class="button secondary" data-save-video="${j.uid}">下载</button>`:''}</div></div></article>`).join(''):'<div class="empty-state">这里还没有任务。先创建一镜，或导入你的分镜清单。</div>';
+  const allCount=jobs.length;jobs=jobs.slice(0,queueLimit);$('#jobs-grid').innerHTML=jobs.length?jobs.map(j=>`<article class="job-card"><div class="job-preview">${j.current?.blobKey?`<video data-video="${h(j.current.blobKey)}" controls playsinline preload="none"></video>`:`<span>${['queued','generating'].includes(j.state)?'◌':'▷'}</span><small>${h(j.seconds)} SEC / ${h(j.aspect)}</small>`}</div><div class="job-card-body"><div class="job-card-head"><h3>${h(j.id)}</h3><span class="status ${j.state}">${LABELS[j.state]||h(j.state)}</span></div><p class="job-prompt">${h(j.prompt)}</p><div class="job-meta"><span>${h(j.episode)}</span><span>${h(j.studioName||'原有项目')}</span><span>${j.seconds} 秒</span><span>${h(j.aspect)}</span><span>V${j.attempts.length||1}</span></div>${j.error?`<div class="job-error">${h(j.error)}</div>`:''}<div class="job-actions"><button class="button secondary" data-detail="${j.uid}">详情与操作 ↗</button>${j.current?`<button class="button secondary" data-save-video="${j.uid}">下载</button>`:''}</div></div></article>`).join(''):'<div class="empty-state">这里还没有任务。先创建一镜，或导入你的分镜清单。</div>';
   if(allCount>queueLimit)$('#jobs-grid').insertAdjacentHTML('beforeend','<button class="button secondary" id="more-jobs">显示更多任务</button>');
   for(const el of $$('[data-video]')){try{const src=await localURL(el.dataset.video);if(id===renderId)el.src=src;}catch{el.closest('.job-preview').innerHTML='<small>文件未载入，请在详情中恢复本地文件。</small>';}}
   const groups=[...new Set(project.jobs.map(j=>j.episode))];$('#episodes-list').innerHTML=groups.map(ep=>{const shots=project.jobs.filter(j=>j.episode===ep),r=shots.filter(j=>['ready','approved'].includes(j.state)).length;const film=project.episodes.filter(e=>e.id===ep).at(-1);const stale=film&&film.inputs.some(i=>project.jobs.find(j=>j.id===i.id)?.current?.sha256!==i.sha256);return `<div class="episode-row"><div><strong>${h(ep)}</strong><small>${r}/${shots.length} 镜 · 计划 ${shots.reduce((s,j)=>s+j.seconds,0)} 秒${film?` · 已拼接 V${film.version}${stale?' · 镜头已更新，需重拼':''}`:''}</small></div><div class="inline-actions">${film?`<button class="button secondary small" data-episode-play="${ep}">查看成片</button>`:''}<button class="button secondary small" data-assemble="${ep}" ${r!==shots.length||runner.running?'disabled':''}>${film?'重新拼接':'本地拼接'} →</button></div></div>`;}).join('');updateConnection();
@@ -84,7 +92,7 @@ async function openDetail(job){
 function lookup(value){const job=project.jobs.find(j=>j.uid===value);if(!job)throw Error('任务未找到。');return job;}
 function hasUnresolved(){return project.jobs.some(j=>['unknown','submitting','queued','generating','deferred','download','checking'].includes(j.state)||(j.attempts.at(-1)?.videoId&&!j.attempts.at(-1).resolved&&!j.attempts.at(-1).terminalConfirmed));}
 function ensureIdle(){if(directoryBusy)throw Error('目录正在备份或连接，请稍候。');if(assetLibrary?.busy||batchPanel?.busy)throw Error('素材仍在处理中，请等待完成，或先停止当前批量操作。');if(runner.running)throw Error('请先暂停新提交，并等待当前任务完成后再修改记录。');}
-async function newAsset(asset){assetLibrary.mode='optimize';const issue=await assetLibrary.commit(asset);await save();await renderAssets();await renderSelected();if(batchPanel&&$('#batch-input').value.trim())batchPanel.preview();toast(issue||'已另存优化版本，原文件保留；原路径素材的替代关系已记录。',!!issue);}
+async function newAsset(asset){assetLibrary.mode='optimize';const issue=await assetLibrary.commit(asset);await save();await renderAssets();await renderSelected();if(batchPanel&&$('#batch-input').value.trim())batchPanel.preview();toast(issue||'已同名另存优化版本，原文件保留；素材替代关系已记录。',!!issue);}
 async function mirrorAllFiles(folder){
   for(const a of project.assets)await writeAssetFile(folder,a,project);
   for(const j of project.jobs)for(const a of j.attempts.flatMap(a=>[a,...(a.downloadHistory||[])])){
@@ -101,21 +109,23 @@ function guide(){const parts=[
  ['02 / 素材与提示词','<p>添加素材时先显示校验清单，再逐项显示进度。素材库可多选批量优化图片或下载 ZIP；图片点击查看全图、原始尺寸与缩放。声音裁切需单独指定范围，清单原路径素材不会复制；优化合格后自动记住替代关系，新分镜与未提交分镜使用优化版，已生成历史保留。</p><p>参考图片最多5张，声音最多3段；声音总长2–12秒，单文件小于15MB。图片宽高256–5760像素，宽高比0.4–2.5。</p><p>素材库可以另存尺寸优化图和裁切声音。低清图片被放大不会恢复细节；角色身份、情节拆分、音色克隆不能靠规则修正，请用创作工具处理后再导入。</p><p>在参考模式用 <code>&lt;Picture 1&gt;</code>、<code>&lt;Audio 1&gt;</code> 按已选素材顺序标明用途。台词和动作说明分开写，避免模型朗读动作说明。</p>'],
  ['03 / 稳定批量生成','<p>单镜4–12秒，所有认证请求至少间隔90秒，整批只允许一个任务在途。排队、限流会延长等待。保持页面与电脑唤醒；系统休眠时浏览器不能后台保证运行。</p><p>刷新后确认密钥已启用、重新授权文件夹，再继续。提交超时没有video_id时，必须在服务商控制台核实；绑定找到的编号，或确认根本没创建。严禁为赶进度盲重发。</p><p>本平台的单任务锁覆盖同一浏览器同一网站。请停止其他使用同一账户的生成程序；多个设备的RPM无法由静态网页统一约束。</p>'],
  ['04 / 校验、修订和拼接','<p>下载后检查MP4、时长、分辨率、比例、SHA-256、五点抽帧及完整解码。暗画面只是提醒，不自动当坏片。没有在此版本内置Whisper：指定台词只供人工听审和导出外部AI复核。</p><p>先重试下载或重新校验，再决定是否修订提示词重做。每次重做会产生新任务，历史文件保留。连续镜使用前镜当前版本末帧，更新前镜后需要复核后镜。</p><p>各镜技术通过后按组本地拼接MP4，统一24fps、48k音频；整集再次完整解码。单次拼接输入上限450MB；超出请分组或交给本地FFmpeg。</p>'],
+ ['06 / 创作项目、素材筛选与试听','<p>“全新项目”和“项目选择”切换独立草稿与素材库，任务与成片仍显示当前制作记录的全部任务。各项目共用已选择的输出目录；镜号与拼接分组保持全局唯一。</p><p>提示词写入完整素材文件名后，点“自动关联素材库”可匹配当前有效版本；不同来源同名时改用准确路径。素材库按版本、图片/声音、校验状态和名称筛选；默认隐藏已替代原图，清空后可恢复。</p><p>声音试听、任务卡片和预览窗口同时只播放一段。播放新段自动暂停旧段，关闭预览或切换页面也会暂停。</p>'],
  ['05 / 文件和密钥','<p>本地目录含 <code>project.json</code>、<code>references/</code>、<code>raw/</code>、<code>clips/</code>、<code>checks/</code>、<code>episodes/</code>。浏览器保存工作副本，项目目录是可迁移备份。</p><p>本机默认密钥即开即用，私有配置不加入 Git 或公开网页。新密钥默认只在本次打开期间有效。需要加密保存与迁移时，展开高级模式设置口令；忘记口令需重新输入密钥。</p><p>生成需要把本镜提示词和所选参考素材发送给 AgnesAI，结果再下载到本地；不是离线模型推理。</p>'],
  ['06 / 常见恢复操作','<ul><li>跨域失败：切换本机连接器。Pages网址须用 <code>--origin https://你的用户名.github.io</code> 放行；允许浏览器“本地网络访问”权限。</li><li>下载失败：保留video_id，重新下载或手动下载后导入，不重复生成。</li><li>素材缺失：选择原项目文件夹，确认恢复已有项目。不要仅复制JSON。</li><li>完整解码失败：保留原文件，重新下载确认。依然失败再修订为新版本。</li><li>字幕、人物变形、台词错配：标记不合格，写明原因，导出AI复核提示词。</li></ul><a href="./README.md" target="_blank" rel="noopener">查看完整说明与 GitHub Pages 发布方法 ↗</a>']];$('#guide-content').innerHTML=parts.map(([title,body])=>`<article class="guide-section"><h2>${title}</h2>${body}</article>`).join('');}
 
 async function init(){
-  if(!window.isSecureContext||!navigator.locks||!crypto.subtle){document.body.innerHTML='<main style="margin:40px"><h1>请通过 localhost 或 HTTPS 打开 X-AI</h1><p>双击“启动X-AI.cmd”，然后访问 http://127.0.0.1:4173。推荐桌面版 Chrome / Edge。</p></main>';return;}
+  if(!window.isSecureContext||!navigator.locks||!crypto.subtle){document.body.innerHTML='<main style="margin:40px"><h1>请通过 localhost 或 HTTPS 打开 X-AI</h1><p>双击“启动X-AI.cmd”，启动工具会自动打开正确的本地地址。推荐桌面版 Chrome / Edge。</p></main>';return;}
   exclusive=await new Promise((resolve,reject)=>navigator.locks.request('x-ai-studio-tab',{ifAvailable:true},lock=>{resolve(!!lock);if(lock)return new Promise(()=>{});}).catch(reject));
   if(!exclusive){document.body.innerHTML='<main class="locked-page"><img src="./assets/logo.svg" alt="X-AI"><h1>另一个 X-AI 页面正在使用</h1><p>本页未载入或修改项目。请关闭另一页，再刷新继续。</p><button class="button primary" id="reload-exclusive">重新连接</button></main>';document.querySelector('#reload-exclusive').addEventListener('click',()=>location.reload());return;}
-  project=validateProjectFile(await loadProject());folder=await getFolder();runner=new Runner(()=>({project,folder}),()=>{render().catch(e=>toast(friendlyError(e),true));},toast);
-  assetLibrary=new AssetLibrary({context:()=>({project,folder}),bind:on,ensureIdle,url:localURL,onChange:async()=>{await render();await renderSelected();if(batchPanel&&$('#batch-input').value.trim())batchPanel.preview();},onReference:useReferences,referenceIds:activeReferences,referenceLabel:()=>batchMode?'批量共用素材':'当前分镜',showLibrary:()=>view('assets'),toast});
-  batchPanel=new BatchPanel({context:()=>({project,folder}),bind:on,ensureIdle,planImport:(files,options)=>assetLibrary.planImport(files,options),defaults:batchDefaults,showLibrary:()=>view('assets')});
+  project=validateProjectFile(await loadProject());ensureStudios(project);folder=await getFolder();runner=new Runner(()=>({project,folder}),()=>{render().catch(e=>toast(friendlyError(e),true));},toast);
+  assetLibrary=new AssetLibrary({context:()=>({project,folder}),bind:on,ensureIdle,url:localURL,onChange:async()=>{await render();await renderSelected();if(batchPanel&&$('#batch-input').value.trim())batchPanel.preview();captureDraft();await saveProject(project,folder);},onReference:useReferences,referenceIds:activeReferences,referenceLabel:()=>batchMode?'批量共用素材':'当前分镜',showLibrary:()=>view('assets'),toast});
+  assetLibrary.reselectFiles=()=>pickAssets(false);
+  batchPanel=new BatchPanel({context:()=>({project:{...project,assets:studioAssets(project)},folder}),bind:on,ensureIdle,planImport:(files,options)=>assetLibrary.planImport(files,options),defaults:batchDefaults,showLibrary:()=>view('assets')});
   on('#library-return-studio','click',()=>view('studio'));
   credentials=new CredentialsPanel({transport:runner.transport,bind:on,ensureIdle,onConnectionChange:updateConnection,event,save});
   await credentials.initialize();
   for(const job of project.jobs){if(job.state==='submitting'){job.state=job.attempts.at(-1)?.videoId?'queued':'unknown';job.error='页面在提交时中断，请先核实服务端video_id。';}if(job.state==='checking')job.state='download';}
-  await saveProject(project,folder);guide();await render();await renderSelected();
+  let saveIssue;try{await saveProject(project,folder);}catch(e){saveIssue=e;await saveProject(project,null);}guide();await render();await renderSelected();if(saveIssue)toast('浏览器记录已恢复，目录暂未保存。'+friendlyError(saveIssue),true);
   $$('.nav[data-view]').forEach(b=>b.addEventListener('click',()=>view(b.dataset.view)));$$('.close-dialog').forEach(b=>b.addEventListener('click',()=>b.closest('dialog').close()));
   on('#settings-button','click',showSettings);on('#connection-status','click',showSettings);on('#help-button','click',()=>view('guide'));on('#go-queue','click',()=>view('queue'));on('#new-from-queue','click',()=>view('studio'));
   on('#choose-folder','click',async()=>{
@@ -123,48 +133,68 @@ async function init(){
     if(existing){
       if(hasUnresolved()&&(existing.id!==project.id||existing.updatedAt<project.updatedAt))throw Error('当前项目还有未解决的远端任务，不能切换到其他或更早的记录。请先恢复原任务。');
       if(!confirm(`目录中已有项目“${existing.name}”，包含 ${existing.jobs.length} 镜。恢复此项目及其媒体文件？取消不会改动目录。`))return;
-      const restored=await restoreProjectFiles(existing,candidate);project=restored;selected=[];batchSelected=[];for(const key of [...urls.keys()])clearURL(key);event('project_restored','已核对素材、原始下载、历史版本、末帧及成片');
+      const restored=await restoreProjectFiles(existing,candidate);project=restored;ensureStudios(project);await loadStudioDraft();for(const key of [...urls.keys()])clearURL(key);event('project_restored','已核对素材、原始下载、历史版本、末帧及成片');
     }
     const backup=await backupReferences(candidate,(n,total,path)=>{$('#directory-details').hidden=false;$('#directory-details').open=true;$('#directory-location-label').textContent=candidate.name+' /';$('#directory-backup-status').textContent=`检测到已有 references 文件，正在备份并核验 ${n} / ${total}：${path}`;});
     if(backup){$('#directory-backup-status').textContent=`已备份 ${backup.count} 个原文件到 ${candidate.name} / ${backup.path}`;event('references_backed_up',`${backup.count} 个文件 → ${backup.path}`);}else $('#directory-backup-status').textContent='references 为空或尚未创建，无需备份。';
     if(!existing)await mirrorAllFiles(candidate);
     folder=candidate;await put('handles','directory',folder);await save();await renderSelected();toast(existing?'项目和媒体文件已恢复。':'本地文件夹已连接。原路径素材保留，生成文件与优化结果保存到这里。');}finally{directoryBusy=false;$('#choose-folder').disabled=false;}
   });
-  on('#new-project','click',async()=>{ensureIdle();if(hasUnresolved())throw Error('请先解决当前项目的远端任务，再新建项目。');if((project.jobs.length||project.assets.length)&&!folder)throw Error('当前项目尚未落盘，请先连接输出目录保存，再新建项目。');const name=prompt('新项目名称（现有目录和文件保留）','我的视频项目');if(!name?.trim())return;if(project.jobs.length&&!confirm('开始新项目？已有项目保留在原目录，请确认已保存。'))return;await save();project=makeProject();project.name=name.trim().slice(0,100);folder=null;selected=[];batchSelected=[];await remove('handles','directory');for(const key of [...urls.keys()])clearURL(key);await save();await renderSelected();view('studio');toast('已新建项目，请选择一个新的输出文件夹。');});
+  on('#new-project','click',async()=>{ensureIdle();if(hasUnresolved())throw Error('请先解决当前项目的远端任务，再新建项目。');if((project.jobs.length||project.assets.length)&&!folder)throw Error('当前项目尚未落盘，请先连接输出目录保存，再新建项目。');const name=prompt('新制作记录名称（将切换整个任务记录，现有目录和文件保留）','我的视频项目');if(!name?.trim())return;if(project.jobs.length&&!confirm('开始新制作记录？已有项目保留在原目录，请确认已保存。'))return;await save();project=makeProject();project.name=name.trim().slice(0,100);ensureStudios(project);folder=null;await remove('handles','directory');await loadStudioDraft();for(const key of [...urls.keys()])clearURL(key);await save();view('studio');toast('已新建制作记录，请选择新的输出文件夹。');});
   on('#restore-folder','click',async()=>{if(!await permitted(folder,true))throw Error('文件夹未授权。');await save();});
   function switchCreationMode(batch){
     batchMode=batch;$('.composer').dataset.createMode=batch?'batch':'single';
     for(const [id,active] of [['mode-single',!batch],['mode-batch',batch]]){const tab=$('#'+id);tab.classList.toggle('selected',active);tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;}
     $('#job-form').setAttribute('aria-labelledby',batch?'mode-batch':'mode-single');$('#single-editor').hidden=batch;$('#single-editor').disabled=batch;$('#batch-editor').hidden=!batch;$('#batch-editor').disabled=!batch;$('#batch-panel').hidden=!batch;
-    $('#validation-output').replaceChildren();
+    $('#validation-output').replaceChildren();$('#auto-assets-feedback').hidden=true;
     $('#mode-heading-note').textContent=batch?'批量编排':'单镜创作';$('#creation-mode-note').innerHTML=batch?'<strong>多段一次生成</strong><span>在下方清单编排多镜，读取引用后整批检查；缺省参数在“批量默认设置”里调整。</span>':'<strong>单段生成</strong><span>填写一段画面与动作，生成一个视频。</span>';
     $('#add-jobs').innerHTML=batch?'检查整批并加入队列 <span>→</span>':'检查并加入队列 <span>→</span>';
   }
+  async function loadStudioDraft(){
+    playback.pauseAll();clearTimeout(draftTimer);batchPanel.resetSource();assetLibrary.resetFilters();const draft=activeStudio(project).draft;
+    for(const id of draftFields){const el=$('#'+id);if(el instanceof HTMLSelectElement)el.value=el.querySelector('option[selected]')?.value||el.options[0].value;else el.value=el.defaultValue;}
+    selected=draft?.selected?.filter(id=>project.assets.some(a=>a.id===id))||[];batchSelected=draft?.batchSelected?.filter(id=>project.assets.some(a=>a.id===id))||[];
+    if(draft)for(const id of draftFields)if(id!=='first-frame'&&id!=='last-frame'&&typeof draft.fields[id]==='string')$('#'+id).value=draft.fields[id];
+    $('#continuity').checked=draft?.continuity??false;switchCreationMode(draft?.batchMode||false);updateMode();await renderSelected();
+    if(draft&&$('#generation-mode').value==='keyframe')for(const id of ['first-frame','last-frame'])$('#'+id).value=effectiveAsset(project.assets.find(a=>a.id===draft.fields[id]),project.assets)?.id||'';
+    if(!draft){let n=1;while(project.jobs.some(j=>j.id==='S'+String(n).padStart(2,'0')))n++;$('#shot-id').value='S'+String(n).padStart(2,'0');let ep=1;while(project.jobs.some(j=>j.episode==='EP'+String(ep).padStart(2,'0')))ep++;$('#episode').value=$('#batch-episode').value='EP'+String(ep).padStart(2,'0');$('#batch-id-prefix').value=$('#shot-id').value;}
+    $('#prompt-count').textContent=$('#prompt').value.length+' 字';await render();await renderAssets();
+  }
+  const showStudioProjects=()=>{const s=activeStudio(project);$('#studio-project-select').innerHTML=project.studios.map(x=>`<option value="${x.id}">${h(x.name)} · ${project.jobs.filter(j=>j.studioId===x.id).length} 镜</option>`).join('');$('#studio-project-select').value=s.id;$('#studio-project-dialog').showModal();};
+  on('#studio-new-project','click',()=>{if(assetLibrary.busy||batchPanel.busy||directoryBusy)throw Error('请等待素材或目录操作完成后再创建项目。');$('#studio-new-name').value='';$('#studio-new-dialog').showModal();$('#studio-new-name').focus();});
+  on('#studio-new-form','submit',async e=>{e.preventDefault();captureDraft();createStudio(project,$('#studio-new-name').value);await loadStudioDraft();event('studio_created',activeStudio(project).name+'；沿用全局任务队列与输出目录');await save();$('#studio-new-dialog').close();toast('已创建全新创作项目。已有任务与成片仍显示在任务页。');});
+  on('#studio-select-project','click',()=>{if(assetLibrary.busy||batchPanel.busy||directoryBusy)throw Error('请等待素材或目录操作完成后再切换项目。');showStudioProjects();});
+  on('#studio-project-apply','click',async()=>{const id=$('#studio-project-select').value;if(!project.studios.some(s=>s.id===id))throw Error('项目已不存在，请重新选择。');captureDraft();project.activeStudioId=id;await loadStudioDraft();event('studio_selected',activeStudio(project).name);await save();$('#studio-project-dialog').close();toast('已切换创作草稿和素材库，任务与成片保持完整。');});
+  on('#studio-auto-assets','click',async()=>{const prompt=$('#prompt').value.trim();if(!prompt)throw Error('请先填写提示词，再自动关联素材。');const result=matchPromptAssets(prompt,studioAssets(project),project.assets);const region=$('#auto-assets-feedback');region.hidden=false;if(result.ambiguous.length){region.textContent='同名素材无法唯一确定：'+result.ambiguous.join('、')+'。请在提示词填写具体路径，或从素材库手动选择。';throw Error('同名素材有多个来源，尚未自动关联。');}if(!result.ids.length){region.textContent='未找到相同文件名。请在提示词写入素材完整文件名（含后缀），或先导入当前项目素材库。';return;}await useReferences(result.ids);region.textContent=`已关联 ${result.ids.length} 项同名素材；有优化替代时使用当前版本。请核对下方素材。`;});
+  $('#job-form').addEventListener('input',()=>{captureDraft();clearTimeout(draftTimer);draftTimer=setTimeout(()=>saveProject(project,folder).catch(e=>toast(friendlyError(e),true)),500);});
+  $('#job-form').addEventListener('change',captureDraft);
   on('#mode-single','click',()=>switchCreationMode(false));on('#mode-batch','click',()=>switchCreationMode(true));
+  for(const id of ['#mode-single','#mode-batch'])on(id,'click',()=>{captureDraft();return saveProject(project,folder);});
   for(const id of ['#mode-single','#mode-batch'])on(id,'keydown',e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const batch=e.key==='End'||(e.key!=='Home'&&!batchMode);switchCreationMode(batch);$(batch?'#mode-batch':'#mode-single').focus();}});
   on('#batch-default-library','click',()=>view('assets'));
   for(const id of ['#batch-seconds','#batch-aspect','#batch-episode','#batch-id-prefix']){on(id,'input',updateBatchDefaultsSummary);on(id,'change',()=>{updateBatchDefaultsSummary();if($('#batch-input').value.trim())batchPanel.preview();});}
   on('#generation-mode','change',updateMode);on('#prompt','input',()=>$('#prompt-count').textContent=$('#prompt').value.length+' 字');
   on('#prompt-example','click',()=>{$('#prompt').value='手绘二维水彩风格。一只背着米色旅行包的小熊走入晨雾中的森林，停在溪水旁侧耳倾听。清晨柔光穿过树叶，镜头从背后缓缓跟随，保持人物脸型、衣服和身体比例一致。一个连续动作，无突然切镜。';$('#prompt-count').textContent=$('#prompt').value.length+' 字';});
   on('#optimize-prompt','click',()=>{const d=defaults();$('#prompt').value=requestPrompt(d,d.assetIds.filter(id=>project.assets.find(a=>a.id===id)?.kind==='image').length);$('#prompt-count').textContent=$('#prompt').value.length+' 字';toast('已补充通用约束。具体剧情、身份和动作仍由你决定。');});
+  on('#asset-pick-files','click',()=>pickAssets(true));on('#library-pick-files','click',()=>pickAssets(false));
   on('#asset-files','change',async e=>{await importFiles([...e.target.files]);e.target.value='';});on('#library-files','change',async e=>{await importFiles([...e.target.files],false);e.target.value='';});
-  $('#drop-zone').addEventListener('dragover',e=>{e.preventDefault();$('#drop-zone').classList.add('dragging');});$('#drop-zone').addEventListener('dragleave',()=>$('#drop-zone').classList.remove('dragging'));$('#drop-zone').addEventListener('drop',run(async e=>{e.preventDefault();$('#drop-zone').classList.remove('dragging');await importFiles([...e.dataTransfer.files]);}));
+  $('#drop-zone').addEventListener('dragover',e=>{e.preventDefault();$('#drop-zone').classList.add('dragging');});$('#drop-zone').addEventListener('dragleave',()=>$('#drop-zone').classList.remove('dragging'));$('#drop-zone').addEventListener('drop',run(async e=>{e.preventDefault();$('#drop-zone').classList.remove('dragging');ensureIdle();const files=[],metadata=new Map();for(const item of e.dataTransfer.items){if(item.kind!=='file')continue;const handle=await item.getAsFileSystemHandle?.();if(handle?.kind==='file'){const root=uid(),file=await handle.getFile();await put('handles','source:'+root,handle);files.push(file);metadata.set(file,{storage:'source',sources:[{root,rootName:'拖入的原文件',path:file.name}]});}else{const file=item.getAsFile();if(file)files.push(file);}}if(files.length)assetLibrary.planImport(files,{metadata,reference:true});else await importFiles([...e.dataTransfer.files]);}));
   on('#batch-example','click',()=>{batchPanel.invalidate();$('#batch-input').value='晨雾中的森林，小熊从画面左侧走入，停在小溪旁。手绘水彩风格，柔和晨光。\n---\n小熊蹲下，用手指轻触溪水，水面出现轻微涟漪。镜头缓缓推近。\n---\n小熊站起来望向森林深处的一点暖光，露出好奇的表情。镜头保持稳定。';});
   on('#download-template','click',()=>downloadFile('X-AI_批量分镜模板.json',JSON.stringify({shots:[{id:'A01-01',episode:'A01',mode:'reference',seconds:8,aspect_ratio:'9:16',prompt:'以<Picture 1>作为人物参考，小熊走进森林。',dialogue:'',files:['角色图.png','环境声.wav']},{id:'A01-02',episode:'A01',mode:'reference',seconds:8,aspect_ratio:'9:16',prompt:'从上一镜结束位置继续，小熊停下，抬头看向树冠。',files:['角色图.png'],continuity_from:'A01-01'}]},null,2)));
-  on('#job-form','submit',async e=>{e.preventDefault();ensureIdle();const d=defaults();let specs=batchMode?await batchPanel.specsForQueue():[d];if(batchMode&&$('#continuity').checked)specs=specs.map((s,i)=>({...s,continuityFrom:i?specs[i-1].id:null}));const jobs=specs.map(newJob);const problems=jobs.map(j=>({id:j.id,...validateJob(j,project.assets,[...project.jobs,...jobs])}));
+  on('#job-form','submit',async e=>{e.preventDefault();ensureIdle();const d=defaults();let specs=batchMode?await batchPanel.specsForQueue():[d];if(batchMode&&$('#continuity').checked)specs=specs.map((s,i)=>({...s,continuityFrom:i?specs[i-1].id:null}));const jobs=specs.map(s=>newJob({...s,studioId:project.activeStudioId,studioName:activeStudio(project).name}));const problems=jobs.map(j=>({id:j.id,...validateJob(j,project.assets,[...project.jobs,...jobs])}));
     $('#validation-output').innerHTML=problems.map(p=>`<div><b>${h(p.id)}</b>${p.errors.length?'<ul>'+p.errors.map(s=>'<li>'+h(s)+'</li>').join('')+'</ul>':'<span class="pass"> ✓ 格式检查通过</span>'}${p.warnings.length?'<ul>'+p.warnings.map(s=>'<li>'+h(s)+'</li>').join('')+'</ul>':''}</div>`).join('');if(problems.some(p=>p.errors.length))throw Error('整批尚未加入，请先处理列出的素材或参数问题。');
     project.jobs.push(...jobs);for(const j of jobs)event('input_approved','素材格式与参数检查通过；内容尚未审核',j.id);await save();toast(`${jobs.length} 镜已加入待提交队列。`);view('queue');
     if(!batchMode){let n=1;while(project.jobs.some(j=>j.id==='S'+String(n).padStart(2,'0')))n++;$('#shot-id').value='S'+String(n).padStart(2,'0');}});
   on('#queue-filter','change',render);on('#start-queue','click',()=>{ensureIdle();return runner.start();});on('#pause-queue','click',()=>{runner.pauseNew=true;toast('将完成当前任务的查询和下载，然后停止提交新任务。');render();});
   on('#export-project','click',()=>downloadFile('project.json',JSON.stringify(redact(project),null,2)));on('#export-notes','click',async()=>{const md=reportMarkdown(project);downloadFile('X-AI_制作过程与结果.md',md,'text/markdown');if(folder&&await permitted(folder))await writeFile(folder,'X-AI_制作过程与结果.md',md);});
   on('#import-project','click',()=>{ensureIdle();if(hasUnresolved())throw Error('当前项目还有未解决的远端任务，请先处理，避免遗失在途编号。');$('#project-import').click();});
-  on('#project-import','change',async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;ensureIdle();if(hasUnresolved())throw Error('请先解决原任务。');if(!folder||!await permitted(folder))throw Error('请先选择原项目所在文件夹。');if(f.size>20_000_000)throw Error('项目记录超过20MB。');const record=validateProjectFile(JSON.parse(await f.text()));if(!confirm('从此记录恢复项目？会先核对目录中的全部文件，检查通过才更新工作副本。'))return;const restored=await restoreProjectFiles(record,folder);project=restored;selected=[];batchSelected=[];for(const key of [...urls.keys()])clearURL(key);event('project_restored','已核对全部媒体与历史版本');await save();await renderSelected();toast('项目已恢复；请确认密钥已启用。');});
+  on('#project-import','change',async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;ensureIdle();if(hasUnresolved())throw Error('请先解决原任务。');if(!folder||!await permitted(folder))throw Error('请先选择原项目所在文件夹。');if(f.size>20_000_000)throw Error('项目记录超过20MB。');const record=validateProjectFile(JSON.parse(await f.text()));if(!confirm('从此记录恢复项目？会先核对目录中的全部文件，检查通过才更新工作副本。'))return;const restored=await restoreProjectFiles(record,folder);project=restored;ensureStudios(project);await loadStudioDraft();for(const key of [...urls.keys()])clearURL(key);event('project_restored','已核对全部媒体与历史版本');await save();await renderSelected();toast('项目已恢复；请确认密钥已启用。');});
   for(const id of ['#connection-mode','#api-origin','#request-gap'])on(id,'change',async()=>{if(runner.running)throw Error('请等当前任务结束后再改连接设置。');project.settings.connection=$('#connection-mode').value;project.settings.origin=$('#api-origin').value;project.settings.gap=Math.max(90,Math.min(3600,Number($('#request-gap').value)||90));$('#request-gap').value=project.settings.gap;$('#bridge-settings').hidden=project.settings.connection!=='bridge';await save();});
   on('#bridge-token','input',()=>{runner.transport.bridgeToken=$('#bridge-token').value.trim();});
   on('#edit-form','submit',async e=>{e.preventDefault();const j=lookup(currentEdit);ensureIdle();await runner.redo(j,$('#edit-prompt').value.trim(),$('#edit-dialogue').value.trim(),$('#edit-reason').value.trim(),{seconds:Number($('#edit-seconds').value),aspect:$('#edit-aspect').value,mode:$('#edit-mode').value,assetIds:[...$('#edit-assets').selectedOptions].map(o=>o.value),firstFrame:$('#edit-first').value||null,lastFrame:$('#edit-last').value||null});$('#edit-dialog').close();$('#detail-dialog').close();toast('新版本已保存为待提交，点击开始队列才会创建新任务。');});
   on('#video-import','change',async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;ensureIdle();const j=lookup(importTarget);await runner.acceptFile(j,f);await openDetail(j);});
   document.body.addEventListener('click',run(async e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
-    if(d.unselect){if(d.referenceMode==='batch')batchSelected=batchSelected.filter(id=>id!==d.unselect);else selected=selected.filter(id=>id!==d.unselect);await renderSelected();}
+    if(d.unselect){if(d.referenceMode==='batch')batchSelected=batchSelected.filter(id=>id!==d.unselect);else selected=selected.filter(id=>id!==d.unselect);await renderSelected();captureDraft();await saveProject(project,folder);}
     if(d.selectAsset)await useReferences([d.selectAsset]);
     if(d.fixImage)assetLibrary.planOptimize([project.assets.find(a=>a.id===d.fixImage)]);
     if(d.trimAudio){if(!folder)throw Error('请先选择输出文件夹。');const a=project.assets.find(a=>a.id===d.trimAudio),input=prompt(`输入开始、结束秒数，例如 0,5。原素材共${a.duration.toFixed(2)}秒。`,'0,'+Math.min(5,a.duration).toFixed(2));if(input===null)return;const [s,t]=input.split(/[,，]/).map(Number);assetLibrary.busy=true;assetLibrary.updateSelection();toast('正在本地裁切声音并保持原格式…');try{await newAsset(await trimAudio(a,s,t));}finally{assetLibrary.busy=false;assetLibrary.updateSelection();}}
@@ -187,6 +217,6 @@ async function init(){
   }));
   setInterval(()=>{if(runner.running&&runner.transport.nextAt>Date.now()){const active=project.jobs.find(j=>['submitting','queued','generating','deferred'].includes(j.state));if(active)$('#queue-notice').textContent=`${active.id} · ${LABELS[active.state]} · 下次请求最早在 ${Math.ceil((runner.transport.nextAt-Date.now())/1000)} 秒后`; }},1000);
   window.addEventListener('beforeunload',e=>{if(runner.running||assetLibrary?.busy||batchPanel?.busy||directoryBusy){e.preventDefault();e.returnValue='';}});
-  document.documentElement.dataset.ready='true';
+  await loadStudioDraft();captureDraft();await saveProject(project,folder);document.documentElement.dataset.ready='true';
 }
 init().catch(e=>toast('初始化失败：'+friendlyError(e),true));
