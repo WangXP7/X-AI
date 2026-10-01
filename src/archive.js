@@ -13,7 +13,9 @@ export function archiveNames(names){
 }
 export async function createArchive(entries,{onProgress=()=>{},cancelled=()=>false}={}){
   if(entries.length>65535||entries.reduce((n,e)=>n+e.blob.size,0)>ARCHIVE_LIMIT)throw Error('单个 ZIP 最多 500MB，请减少勾选数量，分批下载。');
-  const files=[],central=[],encoder=new TextEncoder(),names=archiveNames(entries.map(e=>e.name));let offset=0,centralSize=0;
+  const names=entries.map(e=>e.name),used=new Set();
+  for(const name of names){if(typeof name!=='string'||name.split('/').some(p=>!p||p==='.'||p==='..'||/[<>:"\\|?*\x00-\x1f]/.test(p))||used.has(name.toLowerCase()))throw Error('ZIP 文件路径无效或重复，请减少同名选择后重试。');used.add(name.toLowerCase());}
+  const files=[],central=[],encoder=new TextEncoder();let offset=0,centralSize=0;
   for(let i=0;i<entries.length;i++){
     if(cancelled())throw new DOMException('已停止打包，未发起下载。','AbortError');
     const {blob}=entries[i],name=encoder.encode(names[i]);

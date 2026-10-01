@@ -1,9 +1,9 @@
 {
   "name": "x-ai-video-studio",
-  "version": "1.0.0",
+  "version": "1.1.3",
   "private": true,
   "type": "module",
   "description": "Local-first static AgnesAI video production studio",
-  "scripts": {"start": "python tools/serve.py", "test": "node --test tests/*.test.mjs"},
+  "scripts": {"start": "python tools/launch.py", "serve": "python tools/serve.py", "test": "node --test tests/*.test.mjs", "test:startup": "python tests/test_local_startup.py"},
   "engines": {"node": ">=20"}
 }

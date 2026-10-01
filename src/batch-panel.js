@@ -22,6 +22,7 @@ export class BatchPanel{
     $('#batch-input').addEventListener('input',()=>{this.invalidate();$('#batch-analysis').hidden=true;});
   }
   invalidate(){this.revision++;this.resolved=null;$('#batch-text-report').hidden=true;$('#batch-export-resolved').hidden=true;}
+  resetSource(){this.invalidate();this.entries=new Map();this.sourceId=null;this.csvPath='';this.rootName='';$('#batch-source-selector').hidden=true;$('#batch-loaded-file').textContent='';$('#batch-read-status').textContent='';$('#batch-analysis').hidden=true;this.location();}
   currentResolution(){return this.resolved&&this.resolved.input===$('#batch-input').value&&this.resolved.sourceId===this.sourceId&&this.resolved.csvPath===this.csvPath&&!this.resolved.errors.length;}
   options(){return {sourceId:this.sourceId,csvPath:this.csvPath};}
   specs(){const text=$('#batch-input').value;if(needsResolution(inspectBatch(text))&&!this.currentResolution())throw Error('这份清单包含文本或嵌套引用。请先点“读取引用并展开”，核对结果后再入队。');return parseBatch(text,this.defaults(),this.context().project.assets,{...this.options(),rows:this.currentResolution()?this.resolved.rows:undefined});}

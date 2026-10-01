@@ -77,6 +77,8 @@ export function classifyHTTP(status, body, posting=false){
   return posting?'unknown':'poll_error';
 }
 export function friendlyError(error){
+  if(error?.xaiOperation==='output-write'&&['InvalidStateError','NoModificationAllowedError','NotReadableError'].includes(error.name))return '无法保存 '+(error.xaiPath||'目录记录')+'：文件状态已变化或被其他程序占用。请关闭占用后重试保存；浏览器记录保留。';
+  if(['InvalidStateError','NotReadableError'].includes(error?.name))return '原文件当前不可读取，可能已被移动、替换或占用。请重新选择原文件，再重试此项。';
   if(error?.name==='NotAllowedError')return '本地文件权限被拒绝，请重新授权文件夹。';
   if(error?.name==='QuotaExceededError')return '浏览器本地空间不足，请导出记录并腾出磁盘空间。';
   if(error?.name==='AbortError')return '请求超时或已取消；已有任务编号会保留。';
@@ -101,6 +103,12 @@ export function validateProjectFile(p){
   };
   if(p?.schema!=='x-ai-project-v1'||!safeID(p.id)||typeof p.name!=='string'||!Array.isArray(p.jobs)||p.jobs.length>1000||!Array.isArray(p.assets)||!Array.isArray(p.episodes)||!Array.isArray(p.events))fail();
   if(!ORIGINS.includes(p.settings?.origin)||!['direct','bridge'].includes(p.settings?.connection))fail();
+  if(p.studios!==undefined){
+    if(!Array.isArray(p.studios)||!p.studios.length||p.studios.length>100)fail();const studioIDs=new Set();
+    for(const s of p.studios){if(!s||!safeID(s.id)||studioIDs.has(s.id)||typeof s.name!=='string'||!s.name.trim()||s.name.length>100||!Array.isArray(s.assetIds)||!Array.isArray(s.archivedAssetIds)||[...s.assetIds,...s.archivedAssetIds].some(id=>!p.assets.some(a=>a.id===id)))fail();studioIDs.add(s.id);
+      if(s.draft!==null&&s.draft!==undefined){if(typeof s.draft!=='object'||Array.isArray(s.draft)||typeof s.draft.batchMode!=='boolean'||!s.draft.fields||typeof s.draft.fields!=='object'||Array.isArray(s.draft.fields)||Object.values(s.draft.fields).some(v=>typeof v!=='string'||v.length>10_000_000)||!Array.isArray(s.draft.selected)||!Array.isArray(s.draft.batchSelected)||[...s.draft.selected,...s.draft.batchSelected].some(id=>!p.assets.some(a=>a.id===id)))fail();}
+    }if(!studioIDs.has(p.activeStudioId)||p.jobs.some(j=>j.studioId&&!studioIDs.has(j.studioId)))fail();
+  }
   const ids=new Set(),uids=new Set(),assetIDs=new Set();let active=0;
   for(const j of p.jobs){if(!safeID(j.id)||!safeID(j.uid)||!safeID(j.episode)||ids.has(j.id)||uids.has(j.uid)||!Object.hasOwn(LABELS,j.state)||typeof j.prompt!=='string'||!Array.isArray(j.assetIds)||!Array.isArray(j.attempts)||!Number.isInteger(j.seconds)||j.seconds<4||j.seconds>12||!DIMENSIONS[j.aspect]||!['text','reference','keyframe'].includes(j.mode))fail();ids.add(j.id);uids.add(j.uid);
     if(j.textSources&&(!Array.isArray(j.textSources)||j.textSources.length>10000||j.textSources.some(s=>!s||!safeID(s.root)||!path(s.path)||!/^[a-f0-9]{64}$/.test(s.sha256)||typeof s.field!=='string'||typeof s.selection!=='string'||typeof s.encoding!=='string'||!Array.isArray(s.chain)||s.chain.length>12||s.chain.some(c=>typeof c!=='string'||c.length>2000))))fail();
@@ -114,6 +122,8 @@ export function validateProjectFile(p){
     if(a.storage==='source'&&(!Array.isArray(a.sources)||!a.sources.length))fail();
     if(a.sources&&(!Array.isArray(a.sources)||a.sources.some(s=>!s||!safeID(s.root)||!path(s.path)||typeof s.rootName!=='string')))fail();
     if(a.aliases&&(!Array.isArray(a.aliases)||a.aliases.some(v=>typeof v!=='string'||v.length>1000)))fail();
+    if(a.legacyPaths&&(!Array.isArray(a.legacyPaths)||a.legacyPaths.some(v=>!path(v))))fail();
+    for(const name of ['diskPending','recordPending'])if(a[name]!==undefined&&typeof a[name]!=='boolean')fail();
     if(a.effectiveAssetId&&!p.assets.some(x=>x.id===a.effectiveAssetId&&x.derivedFrom===a.id))fail();assetIDs.add(a.id);}
   for(const e of p.episodes)if(!safeID(e.id)||!Number.isInteger(e.version)||!Number.isFinite(e.seconds)||!Array.isArray(e.inputs)||!path(e.path)||!key(e.blobKey))fail();
   p.settings.gap=Math.max(90,Math.min(3600,Number(p.settings.gap)||90));return p;

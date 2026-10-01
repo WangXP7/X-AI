@@ -252,3 +252,16 @@ body:has(dialog[open])>#toast-region{display:none}
 #video-model:focus-visible{outline:2px solid #8063ce;outline-offset:2px}
 .video-model-mobile-info{display:none}
 @media(max-width:600px){.video-model-field{flex:none;width:100%;max-width:none}.video-model-mobile-info{display:block;font-size:14px;line-height:1.6;color:#655873}}
+
+/* X-AI 1.1: compact controls and project-scoped assets. */
+.studio-project-bar{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;padding:11px 14px;background:#fff;border:1px solid #e5dfef;border-radius:10px}
+.studio-project-bar>div{display:flex;align-items:center;gap:9px;min-width:0}.studio-project-bar small,.studio-project-bar>span{font-size:14px;color:#6c637a}.studio-project-bar strong{font-size:15px;overflow-wrap:anywhere}.studio-project-bar>span{margin-left:auto}
+.form-grid.three.generation-options{grid-template-columns:210px 135px 185px;justify-content:start;gap:14px}.generation-options select{width:100%}
+.asset-filter-toolbar{display:flex;align-items:flex-end;flex-wrap:wrap;gap:12px;padding:14px 0}.asset-filter-toolbar label{min-width:145px;gap:6px}.asset-filter-toolbar select,.asset-filter-toolbar input{min-height:40px;font-size:14px}.asset-search-field{flex:1;max-width:330px}.asset-filter-toolbar .danger{color:#a9444b;border-color:#ead1d4}
+.reference-heading{flex-wrap:wrap;gap:10px}.reference-heading>span{margin-left:auto}
+.brand-tagline{margin:9px 0 0;padding:0;white-space:normal;font-family:inherit;font-size:14px;font-weight:500;font-style:normal;line-height:1.7;letter-spacing:0;color:#686075;background:none;-webkit-text-fill-color:currentColor}
+@media(max-width:1150px){.studio-project-bar>span{width:100%;margin-left:0}}
+@media(max-width:650px){.form-grid.three.generation-options{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.generation-options>label:first-child{grid-column:1/-1}.asset-filter-toolbar label{flex:1;min-width:125px}.asset-search-field{max-width:none}.studio-project-bar>div{width:100%}}
+
+.brand-tagline span{display:block;white-space:nowrap}
+.reference-heading{justify-content:flex-start}.reference-heading #studio-auto-assets{margin-left:0}
