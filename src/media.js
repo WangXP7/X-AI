@@ -60,18 +60,18 @@ export async function trimAudio(asset,start,end){
   }finally{await context.close();}
 }
 async function seek(video,t){await new Promise((resolve,reject)=>{if(Math.abs(video.currentTime-t)<.01&&video.readyState>=2)return resolve();const timer=setTimeout(()=>reject(Error('抽帧超时，请使用深度校验。')),12000);video.onseeked=()=>{clearTimeout(timer);resolve();};video.currentTime=t;});}
-export async function sampleVideo(file){
+export async function sampleVideo(file,onProgress=()=>{}){
   const video=document.createElement('video'),url=URL.createObjectURL(file);video.muted=true;video.preload='auto';video.src=url;
   try{await new Promise((r,j)=>{const t=setTimeout(()=>j(Error('视频加载超时。')),15000);video.onloadeddata=()=>{clearTimeout(t);r();};video.onerror=()=>{clearTimeout(t);j(Error('视频无法解码。'));};});const canvas=document.createElement('canvas');canvas.width=240;canvas.height=Math.round(240*video.videoHeight/video.videoWidth);const ctx=canvas.getContext('2d',{willReadFrequently:true}),frames=[],dark=[];
-    for(const ratio of [.06,.27,.5,.73,.97]){await seek(video,Math.max(.01,video.duration*ratio));ctx.drawImage(video,0,0,canvas.width,canvas.height);const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;let black=0;for(let i=0;i<pixels.length;i+=4)if((pixels[i]+pixels[i+1]+pixels[i+2])/3<15)black++;dark.push(black/(pixels.length/4));frames.push(await new Promise(r=>canvas.toBlob(r,'image/jpeg',.8)));}
+    for(const ratio of [.06,.27,.5,.73,.97]){await seek(video,Math.max(.01,video.duration*ratio));ctx.drawImage(video,0,0,canvas.width,canvas.height);const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;let black=0;for(let i=0;i<pixels.length;i+=4)if((pixels[i]+pixels[i+1]+pixels[i+2])/3<15)black++;dark.push(black/(pixels.length/4));frames.push(await new Promise(r=>canvas.toBlob(r,'image/jpeg',.8)));onProgress({label:`正在抽帧检查 · ${frames.length} / 5`,percent:frames.length/5*100});}
     const last=document.createElement('canvas');last.width=video.videoWidth;last.height=video.videoHeight;await seek(video,Math.max(.01,video.duration-.08));last.getContext('2d').drawImage(video,0,0);return {frames,last:await new Promise(r=>last.toBlob(r,'image/png')),dark};
   }finally{video.removeAttribute('src');video.load();URL.revokeObjectURL(url);}
 }
 let ff,chain=Promise.resolve();
 async function engine(){if(ff)return ff;const {FFmpeg}=await import('../vendor/ffmpeg/index.js');const instance=new FFmpeg();await instance.load({coreURL:new URL('../vendor/ffmpeg-core/ffmpeg-core.js',import.meta.url).href,wasmURL:new URL('../vendor/ffmpeg-core/ffmpeg-core.wasm',import.meta.url).href});ff=instance;return ff;}
 function serialFF(fn){const p=chain.catch(()=>{}).then(async()=>fn(await engine()));chain=p;return p;}
-export async function deepCheck(file){return serialFF(async f=>{const input=uid()+'.mp4',logs=[];const log=({message})=>logs.push(message);f.on('log',log);try{await f.writeFile(input,new Uint8Array(await file.arrayBuffer()));const code=await f.exec(['-hide_banner','-v','info','-xerror','-i',input,'-map','0:v:0','-map','0:a?','-f','null','-'],180000);const joined=logs.join('\n');const fps=Number(joined.match(/,\s*([\d.]+) fps[, ]/)?.[1])||null;return {fullDecode:code===0?'passed':'failed',hasAudio:/Audio:/.test(joined),fps,error:code===0?null:logs.slice(-6).join('\n').slice(0,1500)};}finally{f.off('log',log);await f.deleteFile(input).catch(()=>{});}});}
-export async function inspectVideo(file,job,{deep=true}={}){
+export async function deepCheck(file,onProgress=()=>{}){onProgress({label:'正在加载本地解码引擎'});return serialFF(async f=>{const input=uid()+'.mp4',logs=[];const log=({message})=>logs.push(message),progress=({progress})=>onProgress({label:'正在完整解码视频',percent:Number.isFinite(progress)?Math.min(99,Math.max(0,progress*100)):null});f.on('log',log);f.on('progress',progress);try{onProgress({label:'正在读取视频并完整解码'});await f.writeFile(input,new Uint8Array(await file.arrayBuffer()));const code=await f.exec(['-hide_banner','-v','info','-xerror','-i',input,'-map','0:v:0','-map','0:a?','-f','null','-'],180000);const joined=logs.join('\n');const fps=Number(joined.match(/,\s*([\d.]+) fps[, ]/)?.[1])||null;return {fullDecode:code===0?'passed':'failed',hasAudio:/Audio:/.test(joined),fps,error:code===0?null:logs.slice(-6).join('\n').slice(0,1500)};}finally{f.off('log',log);f.off('progress',progress);await f.deleteFile(input).catch(()=>{});}});}
+export async function inspectVideo(file,job,{deep=true,onProgress=()=>{}}={}){
   const fatal=[],warnings=[],head=new Uint8Array(await file.slice(0,64).arrayBuffer());const sig=new TextDecoder('latin1').decode(head);if(!sig.includes('ftyp'))fatal.push('文件不是有效的MP4容器；请重新下载，不能把错误页面当视频。');
   if(file.size<1024)fatal.push('视频文件过小，可能下载不完整。');
   if(fatal.length)return {fatal,warnings,technical:'failed'};
@@ -79,8 +79,8 @@ export async function inspectVideo(file,job,{deep=true}={}){
   if(info.duration>12.05||Math.abs(info.duration-job.seconds)>.25)fatal.push(`实际${info.duration.toFixed(2)}秒，与计划${job.seconds}秒不符或超过12秒。`);
   if(!target||Math.abs(info.width/info.height-target[0]/target[1])>.045)fatal.push(`实际画幅${info.width}×${info.height}不符合${job.aspect}。`);
   if(Math.min(info.width,info.height)<680)fatal.push(`分辨率${info.width}×${info.height}明显低于720P。`);
-  const samples=await sampleVideo(file);if(samples.dark.some(v=>v>.9))warnings.push('抽帧有大面积暗画面；可能是夜景或黑帧，请查看后判断。');
-  let decode={fullDecode:'not_run'};if(deep){try{decode=await deepCheck(file);if(decode.fullDecode==='failed')fatal.push('完整解码未通过，建议先重新下载。');if(!decode.hasAudio)warnings.push('未发现音轨；请检查是否符合本镜要求。');if(decode.fps&&Math.abs(decode.fps-24)>.1)warnings.push(`帧率${decode.fps}fps，拼接时将统一为24fps。`);}catch(e){warnings.push('深度校验暂不可用，请重试；尚未确认完整解码通过。');decode.error=e.message;}}
+  onProgress({label:'正在读取时长、画幅与抽帧'});const samples=await sampleVideo(file,onProgress);if(samples.dark.some(v=>v>.9))warnings.push('抽帧有大面积暗画面；可能是夜景或黑帧，请查看后判断。');
+  let decode={fullDecode:'not_run'};if(deep){try{decode=await deepCheck(file,onProgress);if(decode.fullDecode==='failed')fatal.push('完整解码未通过，建议先重新下载。');if(!decode.hasAudio)warnings.push('未发现音轨；请检查是否符合本镜要求。');if(decode.fps&&Math.abs(decode.fps-24)>.1)warnings.push(`帧率${decode.fps}fps，拼接时将统一为24fps。`);}catch(e){warnings.push('深度校验暂不可用，请重试；尚未确认完整解码通过。');decode.error=e.message;}}
   return {...info,...decode,fatal,warnings,technical:fatal.length?'failed':decode.fullDecode==='passed'?'passed':'partial',darkRatios:samples.dark,samples};
 }
 export async function concatenate(files,dimensions,onProgress=()=>{}){

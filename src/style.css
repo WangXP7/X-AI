@@ -265,3 +265,20 @@ body:has(dialog[open])>#toast-region{display:none}
 
 .brand-tagline span{display:block;white-space:nowrap}
 .reference-heading{justify-content:flex-start}.reference-heading #studio-auto-assets{margin-left:0}
+
+/* X-AI 1.1.5: factual, live queue activity without replacing preview media. */
+.queue-filter-actions{display:flex;gap:10px;align-items:center;flex-wrap:nowrap}.queue-filter-actions select{width:145px;max-width:145px;flex:none;margin:0}.queue-filter-actions .button{white-space:nowrap}
+.queue-progress-panel{background:#fff;border:1px solid #e3deef;border-radius:12px;margin:16px 0 12px;padding:16px 18px}
+.queue-progress-top,.queue-progress-body,.queue-counters,.queue-overall>div,.queue-current-heading,.queue-current-details{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.queue-progress-top{justify-content:space-between}.queue-counters{gap:10px 20px;font-size:14px;color:#665e74}.queue-counters b{font-size:19px;margin-left:5px;color:#3d344d;font-weight:650}
+.queue-live{display:inline-flex;align-items:center;gap:7px;font-size:14px;color:#77717f}.queue-live:before{content:'';width:7px;height:7px;background:#a4a0ad;border-radius:50%}.is-active .queue-live{color:#4c8a67}.is-active .queue-live:before{background:#65a880;animation:queue-pulse 1.5s ease-in-out infinite}
+.queue-progress-body{align-items:flex-start;gap:20px;margin-top:12px}.queue-overall{flex:1;min-width:230px}.queue-current{flex:2;min-width:300px}.queue-overall>div{justify-content:space-between;font-size:14px}.queue-overall strong,.queue-current-heading strong{font-size:15px;color:#4a3e5b}.queue-current-heading{gap:10px}.queue-current-heading>b{margin-left:auto;color:#7254be;font-size:15px}.queue-current-heading>span{font-size:15px;color:#4d4260}.queue-current-details{gap:4px 12px;font-size:14px;line-height:1.6;color:#746a80;margin-top:4px}.queue-current-details>span:first-child{flex-basis:100%}
+.queue-progress-panel progress,.job-live-progress progress{display:block;width:100%;height:9px;border:0;border-radius:6px;overflow:hidden;accent-color:#8067d1;margin:8px 0}
+.queue-progress-panel progress::-webkit-progress-bar,.job-live-progress progress::-webkit-progress-bar{background:#efebf7;border-radius:6px}.queue-progress-panel progress::-webkit-progress-value,.job-live-progress progress::-webkit-progress-value{background:linear-gradient(90deg,#b39ce6,#7960cf);border-radius:6px;transition:width .3s}
+.queue-progress-panel progress:not([value])::-webkit-progress-bar,.job-live-progress progress:not([value])::-webkit-progress-bar{background:linear-gradient(90deg,#efeaf8 0%,#b7a1e5 40%,#efeaf8 80%);background-size:200% 100%;animation:queue-flow 1.7s linear infinite}
+.queue-progress-panel progress.is-still:not([value])::-webkit-progress-bar,.job-live-progress progress.is-still:not([value])::-webkit-progress-bar{animation:none;background:#efebf7}
+.queue-stages{display:flex;gap:8px;margin:14px 0 0;padding:0;list-style:none;flex-wrap:wrap}.queue-stages li{background:#f5f3f8;border:1px solid #ebe6f1;border-radius:6px;padding:3px 10px;font-size:14px;color:#8a8194}.queue-stages li.done{background:#eff7f2;border-color:#d9eadf;color:#568067}.queue-stages li.current{background:#eee7fc;border-color:#c3b0e6;color:#6444a4;font-weight:600}
+.job-live-progress{margin-top:12px;color:#7b6a96;font-size:14px}.job-live-progress>div{display:flex;gap:8px;justify-content:space-between;align-items:baseline}.job-live-progress b{white-space:nowrap;font-weight:500}.job-live-progress progress{height:6px;margin:6px 0}
+@keyframes queue-pulse{50%{opacity:.35;transform:scale(.85)}}@keyframes queue-flow{to{background-position:-200% 0}}
+@media(max-width:650px){.queue-progress-panel{padding:13px 12px}.queue-progress-body{gap:13px}.queue-current,.queue-overall{min-width:0;flex-basis:100%}.queue-counters{gap:6px 12px}.queue-counters b{font-size:17px}.queue-current-heading{align-items:flex-start}.queue-stages{gap:5px}.queue-stages li{padding:3px 7px}.queue-live{margin-left:auto}.queue-filter-actions{width:100%}}
+@media(prefers-reduced-motion:reduce){.queue-progress-panel progress,.job-live-progress progress{animation:none!important}}

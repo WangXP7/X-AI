@@ -111,6 +111,7 @@ export function validateProjectFile(p){
   }
   const ids=new Set(),uids=new Set(),assetIDs=new Set();let active=0;
   for(const j of p.jobs){if(!safeID(j.id)||!safeID(j.uid)||!safeID(j.episode)||ids.has(j.id)||uids.has(j.uid)||!Object.hasOwn(LABELS,j.state)||typeof j.prompt!=='string'||!Array.isArray(j.assetIds)||!Array.isArray(j.attempts)||!Number.isInteger(j.seconds)||j.seconds<4||j.seconds>12||!DIMENSIONS[j.aspect]||!['text','reference','keyframe'].includes(j.mode))fail();ids.add(j.id);uids.add(j.uid);
+    if(j.progressKnown!==undefined&&typeof j.progressKnown!=='boolean')fail();
     if(j.textSources&&(!Array.isArray(j.textSources)||j.textSources.length>10000||j.textSources.some(s=>!s||!safeID(s.root)||!path(s.path)||!/^[a-f0-9]{64}$/.test(s.sha256)||typeof s.field!=='string'||typeof s.selection!=='string'||typeof s.encoding!=='string'||!Array.isArray(s.chain)||s.chain.length>12||s.chain.some(c=>typeof c!=='string'||c.length>2000))))fail();
     if(j.referenceReplacements&&(!Array.isArray(j.referenceReplacements)||j.referenceReplacements.length>2||j.referenceReplacements.some(r=>!r||!['prompt','dialogue'].includes(r.field)||typeof r.before!=='string'||typeof r.after!=='string')))fail();
     for(const a of [...j.attempts,...(j.current?[j.current]:[])])checkAttempt(a);
