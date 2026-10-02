@@ -22,7 +22,7 @@ try{
     const out=await(await navigator.storage.getDirectory()).getDirectoryHandle('queue-progress-output',{create:true});await s.put('handles','directory',out);await s.saveProject(p,out);
   });
   await page.reload();await page.waitForFunction(()=>document.documentElement.dataset.ready==='true');await page.locator('[data-view=queue]').click();
-  assert.equal(await page.locator('#queue-total').innerText(),'3');assert.equal(await page.locator('#queue-ready').innerText(),'1');assert.equal(await page.locator('#queue-current-percent').innerText(),'37%');
+  assert.equal(await page.locator('#queue-total').innerText(),'3');assert.equal(await page.locator('#queue-ready').innerText(),'1');assert.equal(await page.locator('#queue-current-percent').innerText(),'37%');await page.locator('.queue-progress-extra summary').click();
   const stamp=await page.locator('#queue-updated').innerText();await page.waitForTimeout(1100);assert.notEqual(await page.locator('#queue-updated').innerText(),stamp);
   await page.evaluate(()=>window.__queueVideo=document.querySelector('.job-preview video'));await page.waitForTimeout(1100);assert.equal(await page.evaluate(()=>__queueVideo===document.querySelector('.job-preview video')),true);checks.push('summary counts real jobs; service percentage and timestamps update without recreating preview media');
   await page.evaluate(async()=>await(await import('./src/storage.js')).put('state','rate',{last:Date.now()-90000,notBefore:Date.now()+3200}));

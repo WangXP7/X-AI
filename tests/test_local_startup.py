@@ -112,7 +112,7 @@ class DetachedStartupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='x-ai-startup-integration-') as directory:
             root = Path(directory)
             (root / 'tools').mkdir()
-            for name in ['local_runtime.py', 'launch.py', 'serve.py']:
+            for name in ['local_runtime.py', 'launch.py', 'serve.py', 'local_media.py', 'connector.py']:
                 shutil.copyfile(REPO / 'tools' / name, root / 'tools' / name)
             (root / 'package.json').write_text('{"version":"startup-test"}', encoding='utf-8')
             (root / 'index.html').write_text('<h1>X-AI isolated startup test</h1>', encoding='utf-8')

@@ -1,4 +1,6 @@
-export const MODEL = 'agnes-video-2.5-flash';
+import {promptSpec} from './prompt-spec.js';
+import {modelProfile,modelCapability,requestDurationValid} from './models.js';
+export const MODEL = modelProfile().model;
 export const ORIGINS = ['https://api.agnes-ai.cn', 'https://apihub.agnes-ai.com'];
 export const DIMENSIONS = {'9:16':[720,1280],'16:9':[1280,704],'1:1':[720,720],'4:3':[960,720],'3:4':[720,960],'21:9':[1680,720]};
 export const LABELS = {draft:'素材待检查',invalid:'素材需处理',pending:'审核通过 · 待提交',submitting:'正在提交',unknown:'提交结果待核实',queued:'服务端排队',generating:'生成中',deferred:'退避等待',download:'待下载',checking:'本地校验中',ready:'已生成 · 待内容审核',approved:'内容审核通过',needs_redo:'不合格待处理',failed:'生成失败',blocked:'需处理后继续'};
@@ -28,7 +30,7 @@ export function validateJob(job, assets, allJobs=[]) {
   if(allJobs.some(j=>j.id===job.id && j.uid!==job.uid))errors.push('镜号重复，请使用新镜号或在原任务中修订。');
   if(!cleanPrompt(job.prompt))errors.push('请填写这一镜的画面与动作。');
   if((job.prompt||'').length>12000)errors.push('提示词超过本平台12000字限制，请精简到一个主要动作。');
-  if(!Number.isInteger(Number(job.seconds)) || Number(job.seconds)<4 || Number(job.seconds)>12)errors.push('每镜只能是4–12秒的整数。请先拆分动作，不会自动截断剧情。');
+  let capability;try{capability=modelCapability(job.profileId,job.mode);if(!requestDurationValid(job.seconds,job.profileId,job.mode))errors.push(`${capability.profile.platformName} · ${capability.profile.modelLabel} 当前模式的接口只接受${capability.minSeconds}–${capability.maxSeconds}秒、步长${capability.step}秒的请求。提示词时长优先，请拆成可独立生成的镜头；已返回的较长成片可直接使用。`);}catch(e){errors.push(e.message);}
   if(!DIMENSIONS[job.aspect])errors.push('画面比例不受支持。');
   if(!['text','reference','keyframe'].includes(job.mode))errors.push('请选择文字、参考或首尾帧模式。');
   if(job.seed!==null && job.seed!==undefined && job.seed!=='' && (!Number.isSafeInteger(Number(job.seed)) || Number(job.seed)<0 || Number(job.seed)>2147483647))errors.push('随机种子须为0–2147483647的整数。');
@@ -39,8 +41,9 @@ export function validateJob(job, assets, allJobs=[]) {
   if(job.mode==='reference'){
     if(job.firstFrame||job.lastFrame)errors.push('参考模式不接受首尾帧字段，请清除首尾帧或切换模式。');
     if(!selected.length&&!job.continuityFrom)errors.push('参考模式至少需要一张图或一段声音。');
-    if(images.length+(job.continuityFrom?1:0)>5)errors.push('参考图最多5张，连续镜头的上一镜末帧也占1张。');
-    if(audios.length>3)errors.push('参考声音最多3段。');
+    const refs=capability?.profile.references||modelProfile().references;
+    if(images.length+(job.continuityFrom?1:0)>refs.maxImages)errors.push(`参考图最多${refs.maxImages}张，连续镜头的上一镜末帧也占1张。`);
+    if(audios.length>refs.maxAudio)errors.push(`参考声音最多${refs.maxAudio}段。`);
   }
   if(job.mode==='keyframe'){
     if(!job.firstFrame&&!job.lastFrame)errors.push('首尾帧模式至少选择一帧。');
@@ -50,7 +53,8 @@ export function validateJob(job, assets, allJobs=[]) {
   const relevant=job.mode==='keyframe' ? [job.firstFrame,job.lastFrame].filter(Boolean).map(id=>assets.find(a=>a.id===id)).filter(Boolean) : selected.filter(Boolean);
   for(const a of relevant)if(a.errors?.length)errors.push(`${a.name}：${a.errors.join('；')}`);
   const seconds=audios.reduce((s,a)=>s+(a.duration||0),0);
-  if(audios.length && (seconds<2 || seconds>12.001))errors.push(`声音合计 ${seconds.toFixed(2)} 秒，必须为2–12秒；请先裁切或减少声音。`);
+  const refs=capability?.profile.references||modelProfile().references;
+  if(audios.length && (seconds<refs.minAudioSeconds || seconds>refs.maxAudioSeconds+.001))errors.push(`声音合计 ${seconds.toFixed(2)} 秒，必须为${refs.minAudioSeconds}–${refs.maxAudioSeconds}秒；请先裁切或减少声音。`);
   if(relevant.reduce((s,a)=>s+a.bytes*4/3,0)>48_000_000)errors.push('编码后的请求可能超过50MB，请缩小图片或裁短声音。');
   for(const [kind,count] of [['Picture',images.length+(job.continuityFrom?1:0)],['Audio',audios.length]]){
     for(const m of String(job.prompt).matchAll(new RegExp(`<${kind}\\s+(\\d+)>`,'gi')))if(Number(m[1])<1||Number(m[1])>count)errors.push(`<${kind} ${m[1]}> 没有对应素材，请核对顺序。`);
@@ -81,11 +85,11 @@ export function friendlyError(error){
   if(['InvalidStateError','NotReadableError'].includes(error?.name))return '原文件当前不可读取，可能已被移动、替换或占用。请重新选择原文件，再重试此项。';
   if(error?.name==='NotAllowedError')return '本地文件权限被拒绝，请重新授权文件夹。';
   if(error?.name==='QuotaExceededError')return '浏览器本地空间不足，请导出记录并腾出磁盘空间。';
-  if(error?.name==='AbortError')return '请求超时或已取消；已有任务编号会保留。';
-  if(error instanceof TypeError && /fetch|network/i.test(error.message))return '连接被网络或跨域拦截。可切换本机连接器，然后继续原任务。';
+  if(['AbortError','TimeoutError'].includes(error?.name))return '请求超时或已取消；已有任务编号会保留。';
+  if(error instanceof TypeError && /fetch|network/i.test(error.message))return '浏览器未能读取网络响应，可能是网络或跨域问题。请检查当前失败阶段，原任务编号保留。';
   return String(error?.message||error).replace(/sk-[\w-]{12,}/g,'[密钥已隐藏]').slice(0,220);
 }
-export function newJob(spec){return {...spec,uid:uid(),prompt:cleanPrompt(spec.prompt),seconds:Number(spec.seconds),state:'pending',attempts:[],current:null,createdAt:now(),updatedAt:now(),review:'pending'};}
+export function newJob(spec){const resolved=promptSpec(spec);return {...resolved,uid:uid(),prompt:cleanPrompt(resolved.prompt),seconds:Number(resolved.seconds),state:'pending',attempts:[],current:null,createdAt:now(),updatedAt:now(),review:'pending'};}
 export function makeProject(){return {schema:'x-ai-project-v1',id:uid(),name:'我的视频项目',createdAt:now(),updatedAt:now(),jobs:[],assets:[],episodes:[],events:[],settings:{origin:ORIGINS[0],connection:'direct',gap:90}};}
 export function safeExternalURL(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password?u.href:null;}catch{return null;}}
 export function validateProjectFile(p){
@@ -106,11 +110,11 @@ export function validateProjectFile(p){
   if(p.studios!==undefined){
     if(!Array.isArray(p.studios)||!p.studios.length||p.studios.length>100)fail();const studioIDs=new Set();
     for(const s of p.studios){if(!s||!safeID(s.id)||studioIDs.has(s.id)||typeof s.name!=='string'||!s.name.trim()||s.name.length>100||!Array.isArray(s.assetIds)||!Array.isArray(s.archivedAssetIds)||[...s.assetIds,...s.archivedAssetIds].some(id=>!p.assets.some(a=>a.id===id)))fail();studioIDs.add(s.id);
-      if(s.draft!==null&&s.draft!==undefined){if(typeof s.draft!=='object'||Array.isArray(s.draft)||typeof s.draft.batchMode!=='boolean'||!s.draft.fields||typeof s.draft.fields!=='object'||Array.isArray(s.draft.fields)||Object.values(s.draft.fields).some(v=>typeof v!=='string'||v.length>10_000_000)||!Array.isArray(s.draft.selected)||!Array.isArray(s.draft.batchSelected)||[...s.draft.selected,...s.draft.batchSelected].some(id=>!p.assets.some(a=>a.id===id)))fail();}
+      if(s.draft!==null&&s.draft!==undefined){if(typeof s.draft!=='object'||Array.isArray(s.draft)||typeof s.draft.batchMode!=='boolean'||!s.draft.fields||typeof s.draft.fields!=='object'||Array.isArray(s.draft.fields)||Object.values(s.draft.fields).some(v=>typeof v!=='string'||v.length>10_000_000)||!Array.isArray(s.draft.selected)||!Array.isArray(s.draft.batchSelected)||[...s.draft.selected,...s.draft.batchSelected].some(id=>!p.assets.some(a=>a.id===id)))fail();if(s.draft.creationMode!==undefined&&!['single','batch','pavo'].includes(s.draft.creationMode))fail();if(s.draft.pavoSelected!==undefined&&(!Array.isArray(s.draft.pavoSelected)||s.draft.pavoSelected.some(id=>!p.assets.some(a=>a.id===id))))fail();}
     }if(!studioIDs.has(p.activeStudioId)||p.jobs.some(j=>j.studioId&&!studioIDs.has(j.studioId)))fail();
   }
   const ids=new Set(),uids=new Set(),assetIDs=new Set();let active=0;
-  for(const j of p.jobs){if(!safeID(j.id)||!safeID(j.uid)||!safeID(j.episode)||ids.has(j.id)||uids.has(j.uid)||!Object.hasOwn(LABELS,j.state)||typeof j.prompt!=='string'||!Array.isArray(j.assetIds)||!Array.isArray(j.attempts)||!Number.isInteger(j.seconds)||j.seconds<4||j.seconds>12||!DIMENSIONS[j.aspect]||!['text','reference','keyframe'].includes(j.mode))fail();ids.add(j.id);uids.add(j.uid);
+  for(const j of p.jobs){if(!safeID(j.id)||!safeID(j.uid)||!safeID(j.episode)||ids.has(j.id)||uids.has(j.uid)||!Object.hasOwn(LABELS,j.state)||typeof j.prompt!=='string'||!Array.isArray(j.assetIds)||!Array.isArray(j.attempts)||!requestDurationValid(j.seconds,j.profileId,j.mode)||!DIMENSIONS[j.aspect]||!['text','reference','keyframe'].includes(j.mode))fail();ids.add(j.id);uids.add(j.uid);
     if(j.progressKnown!==undefined&&typeof j.progressKnown!=='boolean')fail();
     if(j.textSources&&(!Array.isArray(j.textSources)||j.textSources.length>10000||j.textSources.some(s=>!s||!safeID(s.root)||!path(s.path)||!/^[a-f0-9]{64}$/.test(s.sha256)||typeof s.field!=='string'||typeof s.selection!=='string'||typeof s.encoding!=='string'||!Array.isArray(s.chain)||s.chain.length>12||s.chain.some(c=>typeof c!=='string'||c.length>2000))))fail();
     if(j.referenceReplacements&&(!Array.isArray(j.referenceReplacements)||j.referenceReplacements.length>2||j.referenceReplacements.some(r=>!r||!['prompt','dialogue'].includes(r.field)||typeof r.before!=='string'||typeof r.after!=='string')))fail();

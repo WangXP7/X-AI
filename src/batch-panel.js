@@ -127,7 +127,7 @@ export class BatchPanel{
       if(issues.length)return; // All references must be unambiguous before importing any files.
       if(revision!==this.revision||input!==$('#batch-input').value)throw Error('清单已改变，请重新读取。');
       const list=[...files.values()];this.busy=false;
-      if(list.length)this.planImport(list.map(x=>x.file),{metadata:new Map(list.map(x=>[x.file,x.extra])),reference:false});else this.preview();
+      if(list.length)await this.planImport(list.map(x=>x.file),{metadata:new Map(list.map(x=>[x.file,x.extra])),reference:false});else this.preview();
     }finally{this.busy=false;$('#batch-read-assets').disabled=false;}
   }
 }

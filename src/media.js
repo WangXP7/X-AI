@@ -1,4 +1,5 @@
 import {uid,sha256,DIMENSIONS} from './core.js';
+import {durationQA} from './prompt-spec.js';
 import {storeBlob,blob,readAsset,freshSource} from './storage.js';
 import {sourceMetadata} from './asset-source.js';
 export function dataURL(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(r.error);r.readAsDataURL(file);});}
@@ -76,7 +77,7 @@ export async function inspectVideo(file,job,{deep=true,onProgress=()=>{}}={}){
   if(file.size<1024)fatal.push('视频文件过小，可能下载不完整。');
   if(fatal.length)return {fatal,warnings,technical:'failed'};
   const info=await metadata(file,'video'),target=DIMENSIONS[job.aspect];
-  if(info.duration>12.05||Math.abs(info.duration-job.seconds)>.25)fatal.push(`实际${info.duration.toFixed(2)}秒，与计划${job.seconds}秒不符或超过12秒。`);
+  const durationCheck=durationQA(info.duration,job.seconds);fatal.push(...durationCheck.fatal);warnings.push(...durationCheck.warnings);
   if(!target||Math.abs(info.width/info.height-target[0]/target[1])>.045)fatal.push(`实际画幅${info.width}×${info.height}不符合${job.aspect}。`);
   if(Math.min(info.width,info.height)<680)fatal.push(`分辨率${info.width}×${info.height}明显低于720P。`);
   onProgress({label:'正在读取时长、画幅与抽帧'});const samples=await sampleVideo(file,onProgress);if(samples.dark.some(v=>v>.9))warnings.push('抽帧有大面积暗画面；可能是夜景或黑帧，请查看后判断。');

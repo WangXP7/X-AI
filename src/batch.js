@@ -1,9 +1,10 @@
 // Delimited lists and references are data, never executable instructions.
+import {promptSpec} from './prompt-spec.js';
 const norm=v=>String(v??'').trim().normalize('NFC');
 export const fieldKey=v=>norm(v).replace(/^\uFEFF/,'').toLowerCase().replace(/[\s_（）()]/g,'');
 const fields={
   id:['id','镜号','镜头编号'], episode:['episode','分集','分组','集名'],
-  prompt:['AgnesAI实际提示词','prompt','提示词','画面动作','画面与动作','画面描述'],
+  prompt:['AgnesAI实际提示词','video_prompt','prompt','提示词','画面动作','画面与动作','画面描述'],
   promptFile:['prompt_file','prompt_path','prompt_ref','提示词文件','提示词路径','提示词引用','画面引用'],
   dialogueFile:['dialogue_file','dialogue_ref','对白文件','台词文件','对白引用'],
   seconds:['seconds','秒数','时长秒','时长'], aspect:['aspect_ratio','aspect','画面比例','比例'],
@@ -109,10 +110,10 @@ export function parseBatch(text,defaults,assets,options={}){
     const group=norm(pick(r,'episode')||defaults.episode);let episode=group,episodeTitle='';
     if(!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(group)){episodeTitle=group;if(!groups.has(group))groups.set(group,'EP'+String(groups.size+1).padStart(2,'0'));episode=groups.get(group);}
     const f=pick(r,'first'),l=pick(r,'last'),explicitMode=pick(r,'mode'),modes={'文字生成':'text','文字':'text','参考':'reference','参考生成':'reference','首尾帧':'keyframe'};
-    return {...defaults,id,episode,episodeTitle,prompt:norm(pick(r,'prompt')),seconds:Number(pick(r,'seconds')??defaults.seconds),aspect:pick(r,'aspect')||defaults.aspect,
+    return promptSpec({...defaults,id,episode,episodeTitle,prompt:norm(pick(r,'prompt')),seconds:Number(pick(r,'seconds')??defaults.seconds),aspect:pick(r,'aspect')||defaults.aspect,
       mode:modes[explicitMode]||explicitMode||((f||l)?'keyframe':refs!==null?(refs.length?'reference':'text'):defaults.mode),dialogue:pick(r,'dialogue',{includeEmpty:true})??defaults.dialogue??'',
       seed:pick(r,'seed')!==undefined?Number(pick(r,'seed')):defaults.seed,assetIds:refs?[...new Set(refs.map(lookup))]:[...defaults.assetIds],
-      firstFrame:f?lookup(f):defaults.firstFrame,lastFrame:l?lookup(l):defaults.lastFrame,continuityFrom:pick(r,'continuity')||null,sourceReferences:r.sourceReferences||refs||[],textSources:r.textSources||[],referenceReplacements:r.referenceReplacements||[]};
+      firstFrame:f?lookup(f):defaults.firstFrame,lastFrame:l?lookup(l):defaults.lastFrame,continuityFrom:pick(r,'continuity')||null,sourceReferences:r.sourceReferences||refs||[],textSources:r.textSources||[],referenceReplacements:r.referenceReplacements||[]});
   });
 }
 export function allReferences(info){

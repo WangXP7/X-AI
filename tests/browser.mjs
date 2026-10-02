@@ -14,7 +14,7 @@ const fixture=await readFile(new URL('tests/fixtures/synthetic.mp4',root));
 await page.route('**/__fixture.mp4',route=>route.fulfill({status:200,body:fixture,contentType:'video/mp4'}));
 const results=[];
 try{
-  await page.goto((process.env.XAI_TEST_URL||'http://127.0.0.1:4173/'));await page.waitForFunction(()=>document.documentElement.dataset.ready==='true');
+  await page.goto((process.env.XAI_TEST_URL||'http://127.0.0.1:4173/'));await page.waitForFunction(()=>document.documentElement.dataset.ready==='true');await page.locator('#experience-expert').click();
   await page.locator('#generation-mode').selectOption('text');await page.locator('#seconds').selectOption('8');await page.locator('#aspect').selectOption('9:16');await page.locator('#prompt-example').click();await page.locator('#add-jobs').click();await page.waitForSelector('.job-card');assert.equal(await page.locator('.job-card').count(),1);results.push('single input validation and queue insertion');
   await page.locator('#new-from-queue').click();await page.locator('#mode-batch').click();await page.locator('#batch-example').click();await page.locator('#add-jobs').click();await page.waitForTimeout(400);assert.equal(await page.locator('.job-card').count(),4);results.push('batch parsing and queue insertion');
   const outcomes=await page.evaluate(async()=>{

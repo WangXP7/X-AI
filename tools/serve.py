@@ -1,13 +1,21 @@
-"""Serve static X-AI files on loopback. No API key or user media handling."""
+"""Serve X-AI on loopback; same-origin recovery for its output CDN, no API relay."""
 import argparse
 import functools
 import json
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import unquote, urlsplit
 from local_runtime import ROOT, server_identity
+from local_media import relay
 
 class Handler(SimpleHTTPRequestHandler):
     prefix = ''
+
+    def do_POST(self):
+        expected = self.prefix + '__xai_media' if self.prefix else '/__xai_media'
+        if urlsplit(self.path).path != expected:
+            self.send_error(404)
+            return
+        relay(self)
 
     def do_GET(self):
         if self.prefix:
