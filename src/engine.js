@@ -1,7 +1,10 @@
-import {MODEL,ORIGINS,DIMENSIONS,now,uid,sha256,redact,nested,classifyHTTP,friendlyError,validateJob,requestPrompt,recordEvent} from './core.js';
+import {ORIGINS,DIMENSIONS,now,uid,sha256,redact,nested,classifyHTTP,friendlyError,validateJob,requestPrompt,recordEvent} from './core.js';
+import {promptSpec} from './prompt-spec.js';
+import {modelProfile} from './models.js';
 import {get,put,blob,storeBlob,saveProject,writeFile,permitted,reportMarkdown,readAsset} from './storage.js';
 import {dataURL,inspectVideo,concatenate,videoMetadata,deepCheck} from './media.js';
 import {reportedProgress} from './queue-progress.js';
+import {ConnectionError,networkRecord} from './network.js';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 export class APIError extends Error{constructor(status,body){super(`接口返回${status}：${String(nested(body,['message','detail'])||'请求未成功').slice(0,140)}`);this.status=status;this.body=body;}}
 export class Transport {
@@ -22,17 +25,23 @@ export class Transport {
       try{const response=await fetch(url,{method:payload?'POST':'GET',headers,body:payload?JSON.stringify(payload):undefined,credentials:'omit',redirect:'error',signal:AbortSignal.timeout(180000)});
         const raw=await response.text();let body;try{body=JSON.parse(raw);}catch{throw Error('接口未返回JSON，保留当前任务，请检查连接。');}
         this.lastResponseAt=Date.now();if(!response.ok)throw new APIError(response.status,redact(body));return body;
-      }finally{this.onActivity({kind:'idle'});}
+      }catch(error){if(error instanceof TypeError||['TimeoutError','AbortError'].includes(error?.name))throw new ConnectionError(payload?'submit':route.startsWith('/v1/models')?'models':'poll',bridge?'bridge':'direct',error);throw error;}finally{this.onActivity({kind:'idle'});}
     });
   }
   async backoff(level=1){const rate=await get('state','rate')||{};rate.notBefore=Math.max(rate.notBefore||0,Date.now()+Math.min(3600,90*2**Math.min(level,6))*1000);await put('state','rate',rate);this.nextAt=rate.notBefore;}
   async media(url){
     let parsed;try{parsed=new URL(url);}catch{throw Error('结果下载地址无效。');}if(parsed.protocol!=='https:'||parsed.username||parsed.password)throw Error('只允许无内嵌凭据的HTTPS媒体链接。');
     const {project}=this.context(),bridge=project.settings.connection==='bridge';
-    const res=await fetch(bridge?'http://127.0.0.1:4174/media':url,{method:bridge?'POST':'GET',headers:bridge?{'Content-Type':'application/json','X-XAI-Token':this.bridgeToken}:{},body:bridge?JSON.stringify({url}):undefined,credentials:'omit',signal:AbortSignal.timeout(180000)});
+    if(bridge&&!this.bridgeToken)throw new ConnectionError('media','bridge',{status:403});
+    let res;try{res=await fetch(bridge?'http://127.0.0.1:4174/media':url,{method:bridge?'POST':'GET',headers:bridge?{'Content-Type':'application/json','X-XAI-Token':this.bridgeToken}:{},body:bridge?JSON.stringify({url}):undefined,credentials:'omit',signal:AbortSignal.timeout(180000)});}catch(error){
+      const local=['127.0.0.1','localhost'].includes(location.hostname)&&location.protocol==='http:'&&parsed.hostname==='cos-platform-outputs.agnes-ai.cn';
+      if(!bridge&&local){this.onActivity({kind:'download',label:'正在通过本机取回原视频',bytes:0,total:0});try{res=await fetch(new URL('../__xai_media',import.meta.url),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url}),credentials:'omit',signal:AbortSignal.timeout(180000)});}catch(localError){throw new ConnectionError('media','local',localError);}}
+      else throw new ConnectionError('media',bridge?'bridge':'direct',error);
+    }
+    if(bridge&&res.status===403)throw new ConnectionError('media','bridge',{status:403});
     if(!res.ok)throw Error(`视频下载失败（${res.status}），可重试下载或手动导入，不必重新生成。`);
     if(Number(res.headers.get('content-length')||0)>512_000_000)throw Error('文件超过512MB，请手动下载检查。');
-    const total=Number(res.headers.get('content-length')||0),reader=res.body.getReader(),parts=[];let length=0;this.onActivity({kind:'download',label:'正在下载视频',bytes:0,total});while(true){const {value,done}=await reader.read();if(done)break;length+=value.length;if(length>512_000_000){await reader.cancel();throw Error('下载超过512MB安全上限。');}parts.push(value);this.onActivity({kind:'download',label:'正在下载视频',bytes:length,total});}return new Blob(parts,{type:'video/mp4'});
+    const total=Number(res.headers.get('content-length')||0),reader=res.body.getReader(),parts=[];let length=0;this.onActivity({kind:'download',label:'正在下载视频',bytes:0,total});try{while(true){const {value,done}=await reader.read();if(done)break;length+=value.length;if(length>512_000_000){await reader.cancel();throw Error('下载超过512MB安全上限。');}parts.push(value);this.onActivity({kind:'download',label:'正在下载视频',bytes:length,total});}}catch(error){if(error instanceof TypeError||['TimeoutError','AbortError'].includes(error?.name))throw new ConnectionError('media',bridge?'bridge':'direct',error);throw error;}if(total&&length!==total)throw Error('视频下载不完整，请重试原地址或手动下载后导入，不必重新生成。');return new Blob(parts,{type:'video/mp4'});
   }
 }
 export class Runner {
@@ -53,7 +62,7 @@ export class Runner {
   }
   async persist(disk=false){const {project,folder}=this.context();await saveProject(project,folder,{requireDisk:disk});if(folder&&await permitted(folder))await writeFile(folder,'X-AI_制作过程与结果.md',reportMarkdown(project));this.onChange();}
   event(kind,msg,id){recordEvent(this.context().project,kind,msg,id);}
-  async start(){
+  async start({onlyUids=null}={}){
     if(this.running){this.pauseNew=false;this.message('队列已恢复，继续当前任务。');return;}if(this.refreshing||this.assembling)throw Error('正在刷新或拼接，请等待当前操作完成。');
     if(!this.transport.key)throw Error('请先解锁密钥。');if(!await permitted(this.context().folder))throw Error('请先选择或重新授权本地文件夹。');
     this.pauseNew=false;this.running=true;this.onChange();
@@ -61,7 +70,7 @@ export class Runner {
       while(true){const p=this.context().project;
         if(p.jobs.some(j=>['submitting','unknown'].includes(j.state)))throw Error('有提交结果待核实的任务。请先绑定原video_id，或核实未创建任务，再继续。');
         let job=p.jobs.find(j=>['queued','generating','download','checking','blocked','deferred'].includes(j.state));
-        if(!job&&!this.pauseNew)job=p.jobs.find(j=>j.state==='pending');if(!job||this.pauseNew&&job.state==='deferred')break;
+        if(!job&&!this.pauseNew)job=p.jobs.find(j=>j.state==='pending'&&(!onlyUids||onlyUids.includes(j.uid)));if(!job||this.pauseNew&&job.state==='deferred')break;
         if(job.state==='blocked')throw Error(job.error||'当前任务需要处理，请打开详情。');
         this.activeUid=job.uid;await this.step(job);this.activeUid=null;this.setActivity({kind:'idle'});await sleep(200);
       }
@@ -69,7 +78,8 @@ export class Runner {
   }
   async payload(job){
     const {project}=this.context();const check=validateJob(job,project.assets,project.jobs);if(check.errors.length)throw Error(check.errors.join('；'));
-    const assets=job.assetIds.map(id=>project.assets.find(a=>a.id===id));const p={model:MODEL,seconds:String(job.seconds),mode:job.mode,size:'720P',aspect_ratio:job.aspect,n:1};if(job.seed!==null&&job.seed!==undefined&&job.seed!=='')p.seed=Number(job.seed);
+    const profile=modelProfile(job.profileId);if(profile.adapter!=='agnes')throw Error('当前平台的API适配器尚未实现。');
+    const assets=job.assetIds.map(id=>project.assets.find(a=>a.id===id));const p={model:profile.model,seconds:String(job.seconds),mode:job.mode,size:profile.resolution,aspect_ratio:job.aspect,n:1};if(job.seed!==null&&job.seed!==undefined&&job.seed!=='')p.seed=Number(job.seed);
     const encode=async a=>{const b=await readAsset(a);if(await sha256(b)!==a.sha256)throw Error(`${a.name}哈希改变，请重新导入。`);return dataURL(b);};
     if(job.mode==='reference'){
       p.images=await Promise.all(assets.filter(a=>a.kind==='image').map(encode));p.audios=await Promise.all(assets.filter(a=>a.kind==='audio').map(encode));
@@ -92,14 +102,14 @@ export class Runner {
       job.state='submitting';job.error=null;attempt.submittedAt=now();this.event('submitting','已写入提交前检查点',job.id);await this.persist(true);
       try{const response=await this.transport.api('/v1/videos',payload);attempt.response=redact(response);attempt.videoId=nested(response,['video_id']);if(typeof attempt.videoId!=='string'||!attempt.videoId){delete attempt.videoId;job.state='unknown';job.error='接口没有返回video_id。请核实服务端任务，不要重新提交。';this.event('submission_unknown',job.error,job.id);await this.persist(true);return;}
         attempt.taskId=nested(response,['task_id','id']);job.state='queued';this.event('accepted','video_id='+attempt.videoId,job.id);await this.persist(true);return;
-      }catch(e){attempt.submitError=redact(e.body||friendlyError(e));
+      }catch(e){attempt.lastProblem=networkRecord(e);attempt.submitError=redact(e.body||friendlyError(e));
         if(e instanceof APIError){const type=classifyHTTP(e.status,e.body,true);if(type==='deferred'){job.state='deferred';job.error='服务端明确拒绝本次创建，等待更长间隔后再提交。';attempt.deferrals=(attempt.deferrals||0)+1;await this.transport.backoff(attempt.deferrals);}else if(type==='rejected'){job.state='failed';attempt.resolved=true;attempt.rejectedBeforeCreation=true;job.error=friendlyError(e);if([401,403].includes(e.status))this.pauseNew=true;}else{job.state='unknown';job.error='提交结果不明。请保留请求记录并核实video_id，禁止直接重发。';}}
         else{job.state='unknown';job.error=friendlyError(e)+' 提交可能已被接受，请先核实。';}this.event(job.state,job.error,job.id);await this.persist(true);return;
       }
     }
     if(['queued','generating'].includes(job.state)){
       if(!attempt?.videoId){job.state='unknown';job.error='缺少video_id，请核实创建结果。';await this.persist();return;}
-      let response;try{response=await this.transport.api('/agnesapi?'+new URLSearchParams({video_id:attempt.videoId,model_name:MODEL}));}catch(e){job.error=friendlyError(e);attempt.pollErrors=(attempt.pollErrors||0)+1;this.event('poll_error',job.error,job.id);if(e instanceof APIError&&[400,401,403,404].includes(e.status))job.state='blocked';else await this.transport.backoff(attempt.pollErrors);await this.persist();return;}
+      let response;try{response=await this.transport.api('/agnesapi?'+new URLSearchParams({video_id:attempt.videoId,model_name:attempt.request?.model||modelProfile(job.profileId).model}));}catch(e){attempt.lastProblem=networkRecord(e);job.error=friendlyError(e);attempt.pollErrors=(attempt.pollErrors||0)+1;this.event('poll_error',job.error,job.id);if(e instanceof APIError&&[400,401,403,404].includes(e.status))job.state='blocked';else await this.transport.backoff(attempt.pollErrors);await this.persist();return;}
       attempt.pollResponse=redact(response);attempt.polledAt=now();attempt.pollErrors=0;const status=String(nested(response,['status'])||'unknown').toLowerCase();const progress=reportedProgress(nested(response,['progress']));job.progressKnown=progress!==null;job.progress=progress??0;job.error=null;
       if(['failed','error','cancelled','canceled'].includes(status)){job.state='failed';attempt.resolved=true;attempt.terminalConfirmed=true;job.error=String(nested(response,['message'])||nested(response,['code'])||'服务端已确认生成失败，打开详情查看原因。');this.event('remote_failed',job.error,job.id);}
       else if(['completed','success','succeeded'].includes(status)){attempt.url=nested(response,['url','video_url']);job.state=attempt.url?'download':'blocked';if(!attempt.url)job.error='任务完成但没有下载链接。请查询原任务，勿重新生成。';}
@@ -107,7 +117,7 @@ export class Runner {
       else job.state='generating';await this.persist(true);return;
     }
     if(['download','checking'].includes(job.state)){
-      this.setActivity({kind:'download',label:'正在下载视频',bytes:0,total:0});try{const file=attempt.rawBlobKey&&!attempt.forceDownload?await blob(attempt.rawBlobKey):await this.transport.media(attempt.url);await this.acceptFile(job,file,attempt);delete attempt.forceDownload;}catch(e){job.state='blocked';job.error=friendlyError(e);this.event('local_processing_failed',job.error,job.id);await this.persist();}
+      this.setActivity({kind:'download',label:'正在下载视频',bytes:0,total:0});try{const file=attempt.rawBlobKey&&!attempt.forceDownload?await blob(attempt.rawBlobKey):await this.transport.media(attempt.url);await this.acceptFile(job,file,attempt);delete attempt.forceDownload;}catch(e){attempt.lastProblem=networkRecord(e)||{at:now(),operation:attempt.rawBlobKey?'local':'media',connection:this.context().project.settings.connection,code:e.name||'error',message:friendlyError(e)};job.state='blocked';job.error=friendlyError(e);this.event('local_processing_failed',job.error,job.id);await this.persist();}
     }
   }
   async acceptFile(job,file,attempt=job.attempts.at(-1)){
@@ -119,16 +129,17 @@ export class Runner {
     job.state='checking';this.event('downloaded','已保存原始文件，开始本地完整解码',job.id);await this.persist(true);
     this.setActivity({kind:'check',label:'正在检查视频容器与时长'});const qa=await inspectVideo(file,job,{deep:true,onProgress:value=>this.setActivity({kind:'check',...value})});const samples=qa.samples;delete qa.samples;attempt.qa=qa;attempt.sha256=incomingHash;attempt.bytes=file.size;attempt.path=`clips/${job.episode}/${job.id}_v${attempt.number}${suffix}.mp4`;attempt.blobKey='clip:'+job.uid+':'+attempt.number+suffix;this.setActivity({kind:'save',label:'正在保存视频、抽帧与核验记录'});await storeBlob(attempt.blobKey,file);await writeFile(folder,attempt.path,file);
     if(samples){attempt.frameDirectory=`checks/${job.id}_v${attempt.number}${suffix}`;attempt.frameKeys=[];for(let i=0;i<samples.frames.length;i++){const key=`frame:${job.uid}:${attempt.number}${suffix}:${i}`;await storeBlob(key,samples.frames[i]);attempt.frameKeys.push(key);await writeFile(folder,`${attempt.frameDirectory}/frame_${i+1}.jpg`,samples.frames[i]);}attempt.lastFrameKey=`last:${job.uid}:${attempt.number}${suffix}`;await storeBlob(attempt.lastFrameKey,samples.last);attempt.lastFramePath=`${attempt.frameDirectory}/last.png`;attempt.lastFrameSha256=await sha256(samples.last);await writeFile(folder,attempt.lastFramePath,samples.last);}
-    attempt.resolved=true;attempt.downloadedAt=now();job.current=JSON.parse(JSON.stringify(attempt));job.state=qa.fatal.length?'needs_redo':qa.technical==='passed'?'ready':'blocked';job.review='pending';job.error=qa.fatal.join('；')|| (qa.technical==='partial'?'尚未完成深度校验，请重试校验。':null);
+    delete attempt.lastProblem;attempt.resolved=true;attempt.downloadedAt=now();job.current=JSON.parse(JSON.stringify(attempt));job.state=qa.fatal.length?'needs_redo':qa.technical==='passed'?'ready':'blocked';job.review='pending';job.error=qa.fatal.join('；')|| (qa.technical==='partial'?'尚未完成深度校验，请重试校验。':null);
     await writeFile(folder,`checks/${job.id}_v${attempt.number}${suffix}/report.json`,JSON.stringify(qa,null,2));this.event('checked',`${job.state}；${qa.fatal.join('；')} ${qa.warnings.join('；')}`,job.id);await this.persist(true);
   }
   async retryDownload(job){const a=job.attempts.at(-1);if(!a?.url)throw Error('没有下载地址，请先查询原任务。');a.forceDownload=true;job.state='download';job.error=null;await this.persist();return this.start();}
   async resumeKnown(job){const a=job.attempts.at(-1);if(!a?.videoId)throw Error('请先绑定原video_id。');if(a.terminalConfirmed)throw Error('服务端已确认终止，请在详情中修订为新版本。');job.state='queued';job.error=null;await this.persist();return this.start();}
-  async redo(job,prompt,dialogue,reason,changes={}){const prior=job.attempts.at(-1);if(prior?.videoId&&!prior.resolved&&!prior.terminalConfirmed)throw Error('原任务尚未确认结束，请继续查询原编号。');if(['unknown','submitting','queued','generating','deferred','download','checking'].includes(job.state))throw Error('当前任务尚未结束，不能创建新尝试。');if(job.state==='blocked'&&!job.current)throw Error('请先恢复原任务或校验，不要重复生成。');const candidate={...job,...changes,prompt,dialogue};const check=validateJob(candidate,this.context().project.assets,this.context().project.jobs);if(check.errors.length)throw Error(check.errors.join('；'));Object.assign(job,changes);job.prompt=prompt;job.dialogue=dialogue;job.revisionReason=reason;job.review='pending';job.error=null;if(job.attempts.at(-1))job.attempts.at(-1).resolved=true;job.current=null;job.state='pending';this.event('revision',reason,job.id);await this.persist(true);}
+  async redo(job,prompt,dialogue,reason,changes={}){const prior=job.attempts.at(-1);if(prior?.videoId&&!prior.resolved&&!prior.terminalConfirmed)throw Error('原任务尚未确认结束，请继续查询原编号。');if(['unknown','submitting','queued','generating','deferred','download','checking'].includes(job.state))throw Error('当前任务尚未结束，不能创建新尝试。');if(job.state==='blocked'&&!job.current)throw Error('请先恢复原任务或校验，不要重复生成。');const candidate=promptSpec({...job,...changes,prompt,dialogue});const check=validateJob(candidate,this.context().project.assets,this.context().project.jobs);if(check.errors.length)throw Error(check.errors.join('；'));Object.assign(job,candidate);job.revisionReason=reason;job.review='pending';job.error=null;if(job.attempts.at(-1))job.attempts.at(-1).resolved=true;job.current=null;job.state='pending';this.event('revision',reason,job.id);await this.persist(true);}
   async assemble(episode,onProgress=()=>{}){if(this.running||this.refreshing||this.assembling)throw Error('当前仍在处理任务，请稍后再拼接。');this.assembling=true;this.setActivity({kind:'assemble',label:'正在核对本集输入与加载媒体引擎'});try{return await this.assembleFiles(episode,progress=>{this.setActivity({kind:'assemble',label:'正在本地拼接 '+episode,percent:Math.min(99,Math.max(0,progress*100))});onProgress(progress);});}finally{this.assembling=false;this.setActivity({kind:'idle'});this.onChange();}}
   async assembleFiles(episode,onProgress){const {project,folder}=this.context();const jobs=project.jobs.filter(j=>j.episode===episode);if(!jobs.length||jobs.some(j=>!['ready','approved'].includes(j.state)||j.current?.qa?.technical!=='passed'))throw Error('本集仍有未通过技术校验的镜头。');if(new Set(jobs.map(j=>j.aspect)).size!==1)throw Error('本集画幅不同，请先统一画幅或分组。');if(jobs.some(j=>!j.current.qa.hasAudio))throw Error('本集中存在无音轨镜头，请先在本地编辑器补音轨。');
     const fingerprints=jobs.map(j=>({id:j.id,path:j.current.path,sha256:j.current.sha256}));const files=[];for(const j of jobs){const b=await blob(j.current.blobKey);if(await sha256(b)!==j.current.sha256)throw Error(j.id+'文件哈希不一致。');files.push(b);}
-    const file=await concatenate(files,DIMENSIONS[jobs[0].aspect],onProgress),info=await videoMetadata(file);const planned=jobs.reduce((s,j)=>s+j.seconds,0);if(Math.abs(info.duration-planned)>.5)throw Error('合并后时长不符，保留原镜头，请检查单镜时长。');const decode=await deepCheck(file,value=>this.setActivity({kind:'assemble',...value}));if(decode.fullDecode!=='passed')throw Error('整集完整解码未通过。');
+    const actualInputs=await Promise.all(files.map(videoMetadata));const planned=actualInputs.reduce((s,info)=>s+info.duration,0);
+    const file=await concatenate(files,DIMENSIONS[jobs[0].aspect],onProgress),info=await videoMetadata(file);if(Math.abs(info.duration-planned)>.5)throw Error('合并后时长与输入原片总时长不符，保留原镜头，请重试拼接。');const decode=await deepCheck(file,value=>this.setActivity({kind:'assemble',...value}));if(decode.fullDecode!=='passed')throw Error('整集完整解码未通过。');
     this.setActivity({kind:'assemble',label:'正在保存分集视频与输入清单'});const version=project.episodes.filter(e=>e.id===episode).length+1,path=`episodes/${episode}_v${version}.mp4`,hash=await sha256(file),key='episode:'+uid();await storeBlob(key,file);await writeFile(folder,path,file);
     const record={id:episode,version,path,sha256:hash,blobKey:key,seconds:info.duration,inputs:fingerprints,createdAt:now(),fullDecode:'passed',review:jobs.every(j=>j.review==='approved')?'人工已审各镜，整集仍待审核':'整集内容待审核'};project.episodes.push(record);await writeFile(folder,`episodes/${episode}_v${version}_inputs.json`,JSON.stringify(record,null,2));this.event('episode_ready',`${episode} ${info.duration.toFixed(2)}秒，版本${version}`);await this.persist(true);return record;
   }
