@@ -1,5 +1,5 @@
 import {escapeHTML as h,recordEvent,now,friendlyError,redact} from './core.js';
-import {blob,remove,storeBlob,saveProject,writeAssetFile,permitted,downloadFile} from './storage.js';
+import {blob,remove,storeBlob,saveProject,writeAssetFile,permitted,downloadFile,get} from './storage.js';
 import {sourceMetadata,mergeAssetSources} from './asset-source.js';
 import {importAsset,optimizeImage} from './media.js';
 import {createArchive,ARCHIVE_LIMIT} from './archive.js';
@@ -142,7 +142,7 @@ export class AssetLibrary {
   }
   async persistAsset(asset){
     const {project,folder}=this.context();
-    try{if(!await permitted(folder))throw Error('输出目录需要重新授权。');await writeAssetFile(folder,asset,project);await this.activateReplacement(asset,false);for(const a of project.assets)delete a.recordPending;delete asset.diskPending;await saveProject(project,folder);return '';}
+    try{if(!await permitted(folder))throw Error('输出目录需要重新授权。');await writeAssetFile(folder,asset,project);await this.activateReplacement(asset,false);for(const a of project.assets)delete a.recordPending;delete asset.diskPending;await saveProject(project,folder,{deferMapping:true});return '';}
     catch(e){asset.diskPending=true;this.stopRequested=true;const message=friendlyError(e);recordEvent(project,'asset_save_pending',asset.name+'；'+message);await saveProject(project,null);return '素材与记录已保存在浏览器，目录保存未完成。'+message+' 点击“重试目录保存”，无需重新导入。';}
   }
   async retrySave(){
@@ -150,9 +150,10 @@ export class AssetLibrary {
     this.busy=true;this.renderOperation();let issue='';
     try{for(const asset of project.assets.filter(a=>a.diskPending)){issue=await this.persistAsset(asset);if(issue)break;}if(!issue){for(const a of project.assets)delete a.recordPending;await saveProject(project,folder);for(const [i,row] of this.results.entries()){const a=project.assets.find(a=>a.id===row.assetId);if(a&&row.state==='warning'&&row.message.includes('目录保存')&&!a.diskPending){row.state=a.errors.length?'warning':'success';row.message=a.errors.length?a.errors.join('；'):'目录保存已恢复；原素材未复制，映射已保存。';const li=$('#asset-operation-results').children[i];li.className=row.state;li.querySelector('span').textContent=row.message;}}this.summary();if(!this.remaining.length){this.stopRequested=false;$('#asset-operation-title').textContent=this.mode==='import'?'素材导入结果':'图片优化结果';}this.progress(this.results.length,this.items.length,'','目录保存已恢复'+(this.remaining.length?' · 可继续剩余项':''));}}
     catch(e){issue=friendlyError(e);for(const a of this.resultAssets())a.recordPending=true;await saveProject(project,null);}
-    finally{this.busy=false;this.renderOperation();$('#asset-operation-feedback').textContent=issue||'目录保存已恢复。原素材未复制，优化文件与引用映射已核验。';$('#asset-operation-feedback').hidden=false;await this.notifyChange();await this.render();}
+    finally{try{$('#asset-operation-feedback').textContent=issue||'目录保存已恢复。原素材未复制，优化文件与引用映射已核验。';$('#asset-operation-feedback').hidden=false;await this.notifyChange();await this.render();}
+      finally{this.busy=false;const feedback=$('#asset-operation-feedback'),message=feedback.textContent;this.renderOperation();feedback.textContent=message;feedback.hidden=false;}}
   }
-  async notifyChange(){try{await this.onChange();}catch(e){this.stopRequested=true;for(const a of this.resultAssets())a.recordPending=true;await saveProject(this.context().project,null);this.renderOperation();$('#asset-operation-feedback').textContent='素材校验结果已保存在浏览器，目录记录保存未完成。'+friendlyError(e)+' 点击“重试目录保存”。';$('#asset-operation-feedback').hidden=false;}}
+  async notifyChange(){try{await this.onChange();}catch(e){this.stopRequested=true;for(const a of this.resultAssets())a.recordPending=true;await saveProject(this.context().project,null);this.renderOperation();$('#asset-operation-title').textContent='素材已处理 · 目录保存待重试';$('#asset-progress-phase').textContent='本轮素材已保留，请重试目录保存';$('#asset-operation-feedback').textContent='素材校验结果已保存在浏览器，目录记录保存未完成。'+friendlyError(e)+' 点击“重试目录保存”。';$('#asset-operation-feedback').hidden=false;}}
   async activateReplacement(asset,disk=true){
     const {project,folder}=this.context(),original=project.assets.find(a=>a.id===asset.derivedFrom);
     if(original&&!asset.errors.length&&original.effectiveAssetId!==asset.id){const previous=original.effectiveAssetId;original.effectiveAssetId=asset.id;
@@ -197,9 +198,10 @@ export class AssetLibrary {
       }
       if(this.reference&&referenceIds.length)referenceNotice=await this.onReference([...new Set(referenceIds)],{importing:true});
     }finally{
-      this.remaining=this.items.slice(completed);$('#asset-operation-title').textContent=this.stopRequested?'素材处理已停止':this.mode==='import'?'素材导入结果':'图片优化结果';this.busy=false;this.phase='done';this.progress(completed,total,'',this.stopRequested?`已停止 · 剩余 ${total-completed} 项未处理`:'处理结束');this.renderOperation();this.summary();
+      this.remaining=this.items.slice(completed);$('#asset-operation-title').textContent=this.stopRequested?'素材处理已停止':this.mode==='import'?'素材导入结果':'图片优化结果';this.phase='done';this.progress(completed,total,'',this.stopRequested?`已停止 · 剩余 ${total-completed} 项未处理`:'保存本轮引用映射');this.renderOperation();this.summary();
       if(referenceNotice){$('#asset-operation-feedback').textContent=referenceNotice;$('#asset-operation-feedback').hidden=false;}
-      if(this.mode==='optimize')$('#assets-version-filter').value='current';await this.notifyChange();await this.render();
+      try{if(this.mode==='optimize')$('#assets-version-filter').value='current';await this.notifyChange();await this.render();}
+      finally{this.busy=false;const feedback=$('#asset-operation-feedback'),message=feedback.hidden?'':feedback.textContent;this.renderOperation();if(message){feedback.textContent=message;feedback.hidden=false;}if(!this.stopRequested)this.progress(completed,total,'','处理结束');}
     }
   }
   stop(){this.stopRequested=true;this.renderOperation();}
@@ -226,9 +228,10 @@ export class AssetLibrary {
     }catch(e){this.progress(this.results.length,assets.length,'',friendlyError(e));}
     finally{this.busy=false;this.phase='done';this.renderOperation();this.summary();}
   }
-  exportReport(){
+  async exportReport(){
     const rows=this.results.map(r=>`- ${r.name}\n  - 状态：${r.state}；${r.message}\n  - 文件：${r.path||'未产生新文件'}\n  - SHA-256：${r.sha256||'未计算'}`).join('\n');
-    downloadFile('X-AI_素材处理记录.md',redact(`# X-AI 素材处理记录\n\n时间：${this.startedAt}\n操作：${this.mode}\n已处理 ${this.results.length} / ${this.items.length} 项\n\n${rows}\n\n格式检查不等于画面或声音内容审核。原素材保留，优化版需查看后再用于分镜。\n`),'text/markdown');
+    const diagnostics=(await get('state','write-diagnostics')||[]).filter(r=>r.at>=this.startedAt).map(r=>`- ${r.at}；${r.path}；阶段 ${r.stage}；${r.code||'已核对'}；尝试 ${r.attempts}；${r.outcome}`).join('\n');
+    downloadFile('X-AI_素材处理记录.md',redact(`# X-AI 素材处理记录\n\n版本：1.1.4\n时间：${this.startedAt}\n操作：${this.mode}\n已处理 ${this.results.length} / ${this.items.length} 项\n\n${rows}\n\n## 本轮目录写入诊断\n\n${diagnostics||'无目录写入异常。'}\n\n格式检查不等于画面或声音内容审核。原素材保留，优化版需查看后再用于分镜。\n`),'text/markdown');
   }
   async preview(id){
     const a=this.context().project.assets.find(a=>a.id===id);if(!a||a.kind!=='image')return;
