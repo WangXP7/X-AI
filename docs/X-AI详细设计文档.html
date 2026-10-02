@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="X-AI 1.1.4详细设计：产品、界面、架构、数据、文件、递归引用、队列、校验、恢复、部署与开发交接。">
+<meta name="description" content="X-AI 1.1.5详细设计：产品、界面、架构、数据、文件、递归引用、队列、校验、恢复、部署与开发交接。">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
-<title>X-AI 1.1.4 · 详细设计文档</title>
+<title>X-AI 1.1.5 · 详细设计文档</title>
 <style>
 *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;color:#262c3c;background:#f5f4f8;font:16px/1.85 'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif}
 a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{position:fixed;inset:0 auto 0 0;width:310px;overflow:auto;padding:28px 23px;background:#f9f7fd;border-right:1px solid #e0d9ef}.reader-brand{font-size:25px;font-weight:800;letter-spacing:1px;color:#2c2546}.reader-brand small{font-size:15px;font-weight:500;display:block;letter-spacing:0;color:#746686;margin-top:4px}.reader-meta{margin:16px 0 20px;font-size:14px;line-height:1.75;color:#6b607a}.reader-nav nav{display:grid;gap:5px}.reader-nav nav a{display:block;text-decoration:none;font-size:14px;line-height:1.6;padding:6px 8px;border-radius:6px}.reader-nav nav a:hover{background:#eae3f7}.reader-nav .level-2{font-weight:650;border-top:1px solid #ebe5f2;padding-top:12px;margin-top:4px}.reader-nav .level-3{padding-left:20px;color:#6b607a}
@@ -15,7 +15,7 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 @media print{body{background:white;font-size:11pt;color:#111}.reader-nav,.document-bar,.anchor{display:none}.document{margin:0;padding:0;max-width:none}.paper{border:0;padding:0;max-width:none;box-shadow:none}h1{font-size:24pt}h2{break-before:auto;font-size:17pt}h3{font-size:13pt}h1,h2,h3{break-after:avoid}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f2f2;color:#222}pre code{white-space:pre-wrap;color:#222}.table-scroll{overflow:visible;border:0}table{min-width:0;font-size:9pt}tr{break-inside:avoid}.diagram{break-inside:avoid}details{display:none}a{color:inherit}}
 </style></head><body>
-<aside class="reader-nav"><div class="reader-brand">X-AI <small>详细设计文档 · 1.1.4</small></div><p class="reader-meta">基准：2026-10-02 · 北京时间<br>实现、验证与扩展分别说明<br>正文约 61,621 字符 · 32 章</p><nav aria-label="文档目录"><a class="level-2" href="#section-2">0. 阅读方式、状态标记与依据</a>
+<aside class="reader-nav"><div class="reader-brand">X-AI <small>详细设计文档 · 1.1.5</small></div><p class="reader-meta">基准：2026-10-02 · 北京时间<br>实现、验证与扩展分别说明<br>正文约 65,306 字符 · 33 章</p><nav aria-label="文档目录"><a class="level-2" href="#section-2">0. 阅读方式、状态标记与依据</a>
 <a class="level-3" href="#section-3">0.1 阅读路径</a>
 <a class="level-3" href="#section-4">0.2 文档用语</a>
 <a class="level-3" href="#section-5">0.3 依据与冲突处理</a>
@@ -176,17 +176,23 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 <a class="level-3" href="#section-160">31.2 稳定本地写入协议</a>
 <a class="level-3" href="#section-161">31.3 检查点与批量映射刷新</a>
 <a class="level-3" href="#section-162">31.4 诊断和用户操作</a>
-<a class="level-3" href="#section-163">31.5 实际验证与版本保留</a></nav></aside>
-<main class="document"><div class="document-bar"><span>可直接双击阅读 · 无脚本 / 无联网依赖</span><a href="./X-AI详细设计文档.md" download>下载 Markdown 源文档</a><a href="../README.md">项目使用说明</a><span>可用浏览器 Ctrl+P 打印</span></div><article class="paper"><h1 id="section-1">X-AI 1.1.4 详细设计文档<a class="anchor" href="#section-1" aria-label="链接到本节">#</a></h1>
+<a class="level-3" href="#section-163">31.5 实际验证与版本保留</a>
+<a class="level-2" href="#section-164">32. 版本 1.1.5 任务刷新与动态进度</a>
+<a class="level-3" href="#section-165">32.1 用户问题与界面布局</a>
+<a class="level-3" href="#section-166">32.2 刷新行为与不可重复计费约束</a>
+<a class="level-3" href="#section-167">32.3 动态阶段与真实数值</a>
+<a class="level-3" href="#section-168">32.4 模块、状态与性能</a>
+<a class="level-3" href="#section-169">32.5 已执行验证、边界及升级</a></nav></aside>
+<main class="document"><div class="document-bar"><span>可直接双击阅读 · 无脚本 / 无联网依赖</span><a href="./X-AI详细设计文档.md" download>下载 Markdown 源文档</a><a href="../README.md">项目使用说明</a><span>可用浏览器 Ctrl+P 打印</span></div><article class="paper"><h1 id="section-1">X-AI 1.1.5 详细设计文档<a class="anchor" href="#section-1" aria-label="链接到本节">#</a></h1>
 <blockquote>
 <p>产品：X-AI · 本地视频创作台<br>
-版本沿革：1.0 原设计；1.1 同名素材、自动关联、筛选与创作项目；1.1.1 单段互斥试听 / 试看；1.1.2 本地启动与连接恢复；1.1.3 原素材只引用与文件状态恢复；1.1.4 目录写入重试与批量映射保存。新增与变更详见第 27—31 章。<br>
+版本沿革：1.0 原设计；1.1 同名素材、自动关联、筛选与创作项目；1.1.1 单段互斥试听 / 试看；1.1.2 本地启动与连接恢复；1.1.3 原素材只引用与文件状态恢复；1.1.4 目录写入重试与批量映射保存；1.1.5 任务刷新与动态进度。新增与变更详见第 27—32 章。<br>
 文档基准日期：2026-10-02（北京时间）<br>
 代码目录：<code>D:\68.AIGC\xAi-videoGen</code><br>
 面向读者：产品负责人、普通使用者、前端开发者、音视频开发者、测试人员及接手开发的 AI。<br>
 文档性质：当前实现说明 + 设计约束 + 扩展方案。不是服务商永久规格承诺，也不是历史视频生产已全部完成的证明。</p>
 </blockquote>
-<p>当前文档正文按 <strong>1.1.4</strong> 实际实现维护。第 27 章单独记录 <strong>1.1</strong> 新增与变更，第 28 章记录 <strong>1.1.1</strong> 播放补充，第 29 章记录 <strong>1.1.2</strong> 启动修复，第 30 章记录 <strong>1.1.3</strong> 素材导入修复，第 31 章记录 <strong>1.1.4</strong> 目录写入修复；历史验证保留原日期和版本，不能当成新功能的验证结果。</p>
+<p>当前文档正文按 <strong>1.1.5</strong> 实际实现维护。第 27 章单独记录 <strong>1.1</strong> 新增与变更，第 28 章记录 <strong>1.1.1</strong> 播放补充，第 29 章记录 <strong>1.1.2</strong> 启动修复，第 30 章记录 <strong>1.1.3</strong> 素材导入修复，第 31 章记录 <strong>1.1.4</strong> 目录写入修复，第 32 章记录 <strong>1.1.5</strong> 队列刷新与进度；历史验证保留原日期和版本，不能当成新功能的验证结果。</p>
 <h2 id="section-2">0. 阅读方式、状态标记与依据<a class="anchor" href="#section-2" aria-label="链接到本节">#</a></h2>
 <h3 id="section-3">0.1 阅读路径<a class="anchor" href="#section-3" aria-label="链接到本节">#</a></h3>
 <div class="table-scroll"><table>
@@ -209,12 +215,12 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 </tr>
 <tr>
 <td>接手开发者 / AI</td>
-<td>第 7、8、10—15、17、19—25、27—31 章</td>
+<td>第 7、8、10—15、17、19—25、27—32 章</td>
 <td>源码、数据协议、状态机、不重复计费、测试和扩展</td>
 </tr>
 <tr>
 <td>测试人员</td>
-<td>第 9、12—16、20、23、26—31 章</td>
+<td>第 9、12—16、20、23、26—32 章</td>
 <td>限制、失败分类、版本恢复、验收场景</td>
 </tr>
 </tbody></table>
@@ -365,7 +371,7 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 </tr>
 <tr>
 <td>品牌署名</td>
-<td>X-AI 1.1.4 与 ® YiQiXP 同一行，下一行统一字体标语</td>
+<td>X-AI 1.1.5 与 ® YiQiXP 同一行，下一行统一字体标语</td>
 <td>不恢复此前被否定的多行版权日期块</td>
 </tr>
 </tbody></table>
@@ -417,7 +423,7 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 <ul>
 <li>Logo：<code>assets/logo.svg</code>，64×64 viewBox；深色圆角底、两条交叉 X 形带、紫色渐变、中央播放三角的组合。</li>
 <li>标准名称：X-AI；辅标 VIDEO STUDIO。</li>
-<li>左下版本：<code>X-AI 1.1.4　® YiQiXP</code>，同一行。</li>
+<li>左下版本：<code>X-AI 1.1.5　® YiQiXP</code>，同一行。</li>
 <li>最底标语：<code>让X-AI和你创造属于你的故事</code>；继承整体字体，14px、常规字形、两行完整短句“让X-AI和你创造”“属于你的故事”，不留单字孤行。</li>
 <li>标语卡：明确两行“你的文件，” / “你的电脑”；两行同左边缘。</li>
 <li>操作指南：描边书本 SVG；圆圈符号已替换，避免误认为单选选中状态。</li>
@@ -681,6 +687,11 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 <td>Transport.api、Runner.start、step、payload、acceptFile</td>
 </tr>
 <tr>
+<td>src/queue-progress.js、queue-panel.js</td>
+<td>1.1.5真实阶段 / 完成数、活动计时、进度和局部UI更新</td>
+<td>queueProgress、reportedProgress、QueuePanel.update</td>
+</tr>
+<tr>
 <td>tools/serve.py</td>
 <td>仅回环地址的开发静态服务</td>
 <td>前台默认4173，支持健康检查与测试前缀</td>
@@ -888,6 +899,11 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 <td>progress</td>
 <td>number</td>
 <td>服务商返回进度；不保证连续 / 准确 / ETA</td>
+</tr>
+<tr>
+<td>progressKnown</td>
+<td>boolean / 未设置</td>
+<td>1.1.5该次服务端响应是否提供合法0—100百分比；缺省不能推测百分比</td>
 </tr>
 <tr>
 <td>revisionReason</td>
@@ -3068,5 +3084,29 @@ node tools/build-design-doc.mjs</code></pre></div>
 <p>local-write-browser.mjs新增6组真实浏览器OPFS验证通过：102项实际文件句柄批量导入，最终映射连续2次InvalidStateError后第3次成功，102个映射齐全；未产生references原件；重复保存不改映射；损坏映射重建；持续映射失败5次后保留102素材，单独补保存成功且不重复导入；处理记录含失败阶段；真实流close提交后故意报错，回读正确即确认，实际close只有一次。页面异常和外部请求为0。</p>
 <p>原source-assets-browser.mjs的6组再通过，原件哈希、有效优化输入、历史video_id和旧前缀兼容保持。所有文件是合成测试数据，不操作用户生产素材，不调用实际收费服务。当前修复覆盖可复现的浏览器写入失败路径；不是宣称用户未知的同步程序、权限设置或磁盘状态都已自动修好。旧版第30章保留1.1.3设计和验证，当前新增在第31章标为1.1.4。</p>
 <p>完整浏览器17组、素材库8组、CSV目录10组在1.1.4再次通过；完整媒体两镜拼接8.021秒并通过WASM解码，未知POST不重发与90秒节流不受本地重试影响。ZIP独立9项CRC与SHA核验通过。HTML当前32章130节、脚本 / 外部请求 / 目录缺失0，桌面和390px无横向溢出。初次完整测试末尾所需专用前缀服务未启动，补充独立子服务后全过，未把连接拒绝忽略为成功。</p>
+<h2 id="section-164">32. 版本 1.1.5 任务刷新与动态进度<a class="anchor" href="#section-164" aria-label="链接到本节">#</a></h2>
+<h3 id="section-165">32.1 用户问题与界面布局<a class="anchor" href="#section-165" aria-label="链接到本节">#</a></h3>
+<p>用户截图显示单镜服务端排队，仅有文字“下次请求最早在59秒后”，没有刷新入口、阶段视图或最近响应说明，容易误以为卡死。新增筛选旁“刷新状态”轻量按钮；工具条下面增加紧凑动态进度卡，显示总任务、已生成、处理中、待提交、需处理数量，左侧整体完成占比，右侧当前镜头状态，底部列素材校验 → 提交任务 → 排队 / 生成 → 下载结果 → 本地校验。</p>
+<p>整体百分比只按ready / approved镜数除以总镜数。needs_redo、invalid、failed等不能算成功；素材已过检查或服务器100%尚未下载 / 本地校验通过也不能算已生成。筛选只改变任务卡片列表，顶部数量始终是整份制作记录，创作Studio切换不影响全局统计。</p>
+<p>当前活动显示镜号、阶段、实际阶段进度、任务已用时间、最近服务端响应多久前、页面刷新的本机时间。刷新时间表示用户触发页面状态同步，不冒充刚收到新的服务端响应。活动指示和进度条颜色与现有紫色 / 绿色界面一致，文字不低于14px；手机工具条换行，进度左右块堆叠，无横向溢出。</p>
+<h3 id="section-166">32.2 刷新行为与不可重复计费约束<a class="anchor" href="#section-166" aria-label="链接到本节">#</a></h3>
+<p>刷新不调用location.reload，不重启网页，不清空浏览器记录。Runner运行中时只更新当前显示，不额外GET、不创建另一条Runner、不跳过nextAt / backoff、不改变pauseNew。现有队列继续按节流查询原任务。</p>
+<p>Runner停止时，refreshStatus取得已有x-ai-production-runner锁，查找queued / generating / blocked或具原video_id的pending，且当前尝试未resolved、未terminalConfirmed、未已有下载URL。只查询第一个已知在途原编号；不会调用POST创建、提交待生成镜头、继续整条队列、下载视频或拼接。若服务端返回完成，状态变为download并保留URL，用户再点“开始 / 继续队列”下载和校验。</p>
+<p>刷新沿用Transport.api、持久化rate和至少90秒间隔，连接测试和之前失败查询也计入。等待中按钮显示“正在刷新”，本机操作和开始队列受refreshing约束，重复刷新Promise合并。另一运行窗口持锁时返回明确提示。无可查询任务、全部完成或未知提交无video_id时，只刷新本地显示，未知提交仍须人工核实 / 绑定原编号，不盲重发。</p>
+<p>素材 / 目录处理或拼接期间刷新只更新已有本地进度，不修改输入和项目。组拼接新增assembling互斥状态，同一时刻不重复拼接、不启动新队列；关闭页面提示包含刷新和拼接。safe refresh是额外状态查询，不是“重做”，已提交Attempt、video_id、当前剪辑版本、资产路径与哈希不回滚。</p>
+<h3 id="section-167">32.3 动态阶段与真实数值<a class="anchor" href="#section-167" aria-label="链接到本节">#</a></h3>
+<p>Transport记录waiting、requesting、download活动，Runner补充prepare、save、check、assemble。每次实际阶段变化固定startedAt，每次事件更新updatedAt。waiting使用本次reserved slot的waitUntil和nextAt，倒计时每秒减少；requesting显示本次请求已等待时长及180秒最大网络等待，不把下一次请求的90秒间隔错误显示为当前响应倒计时。</p>
+<p>服务商progress只有明确数字或百分数字符串、0—100且有限时展示，progressKnown记录是否收到合法值；不把缺省0、NaN、空值、负数或大于100强行转为正常进度。0.5按服务端原0—100数值显示，不自作主张解释为50%。没有合法数值时使用不定进度活动条并说明阶段；不能靠定时器编造每秒增长的生成百分比。</p>
+<p>媒体下载按流中真实累计字节展示MB；Content-Length存在时展示下载比例，不存在时显示已收到的MB和总大小未知。超过既有512MB上限仍停止下载，原服务任务不重建。进度100%只代表下载字节阶段，还要保存和检查。</p>
+<p>sampleVideo每完成一张真实抽帧报告1 / 5到5 / 5；deepCheck从FFmpeg progress报告本次解码阶段，不预先给全流程固定比例。加载媒体引擎、读取文件、抽帧、完整解码、保存视频和检查报告都有活动提示。整集拼接同时报告编码进度、成片完整解码与最终落盘。所有局部阶段百分比与整体已生成镜数分开，不能将本地抽帧100%当成视频内容审核通过。</p>
+<h3 id="section-168">32.4 模块、状态与性能<a class="anchor" href="#section-168" aria-label="链接到本节">#</a></h3>
+<p>queue-progress.js是纯函数：reportedProgress校验服务值，elapsedText格式化时长，queueProgress依据project和运行时activity推导总数 / 当前镜头 / 阶段。queue-panel.js更新既有DOM节点、条形和阶段样式，每秒在任务页可见时更新；onActivity真实事件可以立即更新。日常定时更新不重新生成jobs-grid、不重新载入Object URL、不重建video/audio，从而不打断用户试看。</p>
+<p>刷新完成或实际任务状态变化仍通过原render同步卡片、成片清单和元数据。定时显示不执行saveProject、不新增磁盘写入或认证HTTP；更新时间显示来自真实polledAt或lastResponseAt。activity属于运行时状态，不写成历史尝试凭据，刷新网页后从保存的任务 / polledAt恢复后继续原查询。progressKnown为兼容可选boolean，外部项目恢复校验类型；旧版本字段缺省只显示阶段。</p>
+<p>任务卡增加短阶段条，卡片上的已生成100%表示已完成原技术流程，待内容审核标记保持。prefers-reduced-motion沿用全局减少动画规则；读屏当前阶段为polite状态，进度条aria-valuetext说明未知或具体比例。原单段 / 批量默认值、原创素材只引用、同名优化、互斥播放和云端计费规则保留。</p>
+<h3 id="section-169">32.5 已执行验证、边界及升级<a class="anchor" href="#section-169" aria-label="链接到本节">#</a></h3>
+<p>2026-10-02，新增queue-progress.test.mjs 5项，与旧57项合计62项通过：实际完成统计、等待倒计时与请求已用、非法百分比、下载字节 / 局部阶段比例、暂停和未知提交。</p>
+<p>queue-browser.mjs五组真实Edge验证通过，合成密钥和媒体、受控服务响应。摘要统计3镜 / 1已生成，service progress从37%变46%；最近响应时间每秒变化，原video DOM对象保持。刷新等待预置rate槽，发GET一次、POST零次，原video_id和Attempt数量保持；运行中多次点刷新不加请求，暂停新提交标记稳定；筛选不改全局统计；1500px和390px无横向溢出。无已知任务 / 未知提交不调用API；同页同时三个refreshPromise合并为一次GET；媒体流真实累计2000字节、两种大小一致；实际合成视频抽帧1—5和WASM解码阶段有报告。</p>
+<p>完整browser.mjs17组回归通过，包含解码、两镜成片8.021秒、90秒认证节流、未知POST不重发、已知video_id保留、源图片同名修订和M4A裁切、目录恢复、第二页独占与仓库子路径。原批量CSV / 目录备份10组复测通过。独立刷新查询返回完成后仅转入download，media调用为0；之后合成镜头实际拼接、成片完整解码和输入清单保存均报告活动。HTML33章135节，目录缺失 / 脚本 / 外部请求 / 页面异常均0，桌面和390px无横向溢出。未执行真实收费生成。活动指示说明页面仍在追踪，不能保证服务商持续工作、排队何时结束或最终艺术质量。</p>
+<p>测试曾发现暂停后旧queue-notice渲染覆盖新提示，统一由QueuePanel写入并在点击时即刻更新；另独立Runner测试与页面真实Runner锁冲突，隔离页面刷新释放旧测试Runner再检查，未移除生产锁。升级时先结束 / 停止当前本地操作，刷新确认1.1.5；后续使用页面内刷新状态不会重新加载网页。设计第31章保留目录修复历史，第32章是本轮新增。</p>
 <footer class="reader-footer">本文由同目录 Markdown 生成。以当前源码和用户最新要求核对；未实现功能与未执行检查不得冒充完成。® YiQiXP</footer></article></main>
 </body></html>
