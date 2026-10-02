@@ -1,6 +1,7 @@
 import {makeProject,redact,safeName,now,sha256,validateProjectFile} from './core.js';
 import {effectiveAsset} from './batch.js';
 import {migrateOriginalAssets} from './asset-source.js';
+import {durableWrite,pathParts} from './local-write.js';
 let database;
 export function db(){if(database)return Promise.resolve(database);return new Promise((resolve,reject)=>{const req=indexedDB.open('x-ai-studio',1);req.onupgradeneeded=()=>{for(const n of ['state','blobs','handles'])req.result.createObjectStore(n);};req.onerror=()=>reject(req.error);req.onsuccess=()=>{database=req.result;resolve(database);};});}
 async function operation(store,mode,fn){const d=await db();return new Promise((resolve,reject)=>{const tx=d.transaction(store,mode);let result;const r=fn(tx.objectStore(store));r.onsuccess=()=>{result=r.result;};tx.oncomplete=()=>resolve(result);tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);});}
@@ -14,18 +15,15 @@ export async function getFolder(){return get('handles','directory');}
 export async function chooseFolder(){if(!window.showDirectoryPicker)throw Error('自动写入文件需要桌面版 Chrome 或 Edge，请用支持的浏览器打开。');return showDirectoryPicker({id:'x-ai-output',mode:'readwrite'});}
 export async function permitted(handle,request=false){if(!handle)return false;let p=await handle.queryPermission({mode:'readwrite'});if(p!=='granted'&&request)p=await handle.requestPermission({mode:'readwrite'});return p==='granted';}
 let writing=Promise.resolve();
+async function writeDiagnostic(record){try{const records=await get('state','write-diagnostics')||[];records.push(record);await put('state','write-diagnostics',records.slice(-50));}catch{/* Diagnostics must never turn a successful disk commit into a failure. */}}
 export function writeFile(handle,path,content){
   const task=async()=>{
-    if(!await permitted(handle))throw Error('请先选择本地文件夹并授权写入。');const parts=path.split('/');if(parts.some(p=>!p||p==='.'||p==='..'||/[\\:\x00-\x1f]/.test(p)))throw Error('文件路径不安全。');
-    // Read a disk-backed File before opening a writable destination (which may
-    // even be the same file). Use immutable bytes throughout this write.
-    let stable;try{stable=content instanceof File?new Blob([await content.arrayBuffer()],{type:content.type}):content;}catch(e){e.xaiOperation='source-read';throw e;}
-    let stream;try{let dir=handle;for(const part of parts.slice(0,-1))dir=await dir.getDirectoryHandle(part,{create:true});const file=await dir.getFileHandle(parts.at(-1),{create:true});stream=await file.createWritable();await stream.write(stable);await stream.close();}
-    catch(e){if(stream)await stream.abort().catch(()=>{});e.xaiOperation='output-write';e.xaiPath=path;throw e;}return path;
+    if(!await permitted(handle))throw Error('请先选择本地文件夹并授权写入。');
+    return durableWrite(handle,path,content,{diagnostic:writeDiagnostic});
   };
   const result=writing.catch(()=>{}).then(task);writing=result;return result;
 }
-export async function readFile(handle,path){const parts=path.split('/');if(parts.some(p=>!p||p==='.'||p==='..'||/[\\:\x00-\x1f]/.test(p)))throw Error('恢复路径不安全。');let dir=handle;for(const part of parts.slice(0,-1))dir=await dir.getDirectoryHandle(part);return (await dir.getFileHandle(parts.at(-1))).getFile();}
+export async function readFile(handle,path){const parts=pathParts(path);let dir=handle;for(const part of parts.slice(0,-1))dir=await dir.getDirectoryHandle(part);return (await dir.getFileHandle(parts.at(-1))).getFile();}
 export async function backupReferences(directory,onProgress=()=>{}){
   let refs;try{refs=await directory.getDirectoryHandle('references');}catch(e){if(e.name==='NotFoundError')return null;throw e;}
   const files=[];async function list(dir,path=''){for await(const [name,entry] of dir.entries()){if(entry.kind==='directory')await list(entry,path+name+'/');else files.push({path:path+name,entry});}}
@@ -78,7 +76,15 @@ export async function readAsset(asset){
   return blob(asset.blobKey);
 }
 let saving=Promise.resolve();
-export function saveProject(project,folder,{requireDisk=false}={}){const snapshot=JSON.parse(JSON.stringify(redact(project)));saving=saving.catch(()=>{}).then(async()=>{await put('state','project',snapshot);if(folder&&await permitted(folder)){await writeFile(folder,'project.json',JSON.stringify(snapshot,null,2));const mappings=snapshot.assets.filter(a=>a.storage==='source'||a.effectiveAssetId).map(a=>{const effective=effectiveAsset(a,snapshot.assets);return {assetId:a.id,aliases:a.aliases||[],sources:a.sources||[],originalPath:a.path,originalHash:a.sha256,effectiveAssetId:effective.id,effectivePath:effective.path,effectiveStorage:effective.storage||'output',effectiveHash:effective.sha256};});await writeFile(folder,'reference-mapping.json',JSON.stringify({at:now(),mappings},null,2));}else if(requireDisk)throw Error('任务尚未提交：请重新授权本地文件夹，确保检查点能落盘。');});return saving;}
+async function unchangedJSON(folder,path,value,field){
+  try{const previous=JSON.parse(await(await readFile(folder,path)).text());return JSON.stringify(field?previous?.[field]:previous)===JSON.stringify(field?value[field]:value);}
+  catch(error){if(['NotFoundError','InvalidStateError','NotReadableError','SyntaxError'].includes(error.name))return false;throw error;}
+}
+export function saveProject(project,folder,{requireDisk=false,deferMapping=false}={}){const snapshot=JSON.parse(JSON.stringify(redact(project)));saving=saving.catch(()=>{}).then(async()=>{await put('state','project',snapshot);if(folder&&await permitted(folder)){
+  if(!await unchangedJSON(folder,'project.json',snapshot))await writeFile(folder,'project.json',JSON.stringify(snapshot,null,2));
+  const mappings=snapshot.assets.filter(a=>a.storage==='source'||a.effectiveAssetId).map(a=>{const effective=effectiveAsset(a,snapshot.assets);return {assetId:a.id,aliases:a.aliases||[],sources:a.sources||[],originalPath:a.path,originalHash:a.sha256,effectiveAssetId:effective.id,effectivePath:effective.path,effectiveStorage:effective.storage||'output',effectiveHash:effective.sha256};});
+  const mapping={at:now(),mappings};if((!deferMapping||requireDisk)&&!await unchangedJSON(folder,'reference-mapping.json',mapping,'mappings'))await writeFile(folder,'reference-mapping.json',JSON.stringify(mapping,null,2));
+}else if(requireDisk)throw Error('任务尚未提交：请重新授权本地文件夹，确保检查点能落盘。');});return saving;}
 export function downloadFile(filename,content,type='application/json'){const data=content instanceof Blob?content:new Blob([content],{type});const url=URL.createObjectURL(data);const a=document.createElement('a');a.href=url;a.download=typeof filename==='string'&&filename.length<=240&&!/[<>:"/\\|?*\x00-\x1f]/.test(filename)?filename:safeName(filename);a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);}
 export function reportMarkdown(p){p=redact(p);return `# X-AI 视频生产记录\n\n导出时间：${now()}\n项目：${p.name}\n\n## 执行约束\n\n单镜4–12秒；每次认证HTTP间隔至少${Math.max(90,p.settings.gap)}秒；单任务串行。已知video_id持续查询，提交不明不得盲重发。原素材、历史尝试和当前成片分别保留。技术通过不代表内容审核通过。\n\n## 分镜结果\n\n|镜号|分组|秒数|状态|当前文件|人工审核|\n|---|---|---:|---|---|---|\n${p.jobs.map(j=>`|${j.id}|${j.episode}|${j.seconds}|${j.state}|${j.current?.path||'尚未生成'}|${j.review||'pending'}|`).join('\n')}\n\n## 逐镜执行与核验\n\n${p.jobs.map(j=>`### ${j.id}\n\n创作项目：${j.studioName||'原有项目'}\n\n提示词：\n\n${j.prompt}\n\n对白：${j.dialogue||'无指定对白'}\n\n原清单引用：${(j.sourceReferences||[]).join('；')||'工作台直接选择'}\n\n文本引用来源（入队快照）：\n\n${(j.textSources||[]).map(s=>`- ${s.field}：${s.chain.join(' → ')}；选取 ${s.selection}；${s.encoding}；SHA-256=${s.sha256}`).join('\n')||'无外部文本引用'}\n\n实际素材：${j.assetIds.map(id=>{const a=p.assets.find(x=>x.id===id);return a?`${id} → ${a.path}`:id;}).join('；')}\n\n${j.attempts.map(a=>`- 尝试 ${a.number}：video_id=${a.videoId||'待核实/未提交'}；${a.path||'未下载'}；SHA-256=${a.sha256||'未计算'}；${a.reason||''}\n  - 核验：${JSON.stringify(a.qa||{})}`).join('\n')}\n\n当前问题：${j.error||'未记录'}\n`).join('\n')}\n## 素材与修订\n\n${p.assets.map(a=>`- ${a.name}；SHA-256=${a.sha256}；${a.path}；${a.storage==='source'?'原路径引用，不复制；编号 '+(a.aliases||[]).join('、'):a.derivedFrom?'派生自 '+a.derivedFrom+'：'+a.transform:'原始文件'}${a.effectiveAssetId?'；运行时替换为 '+(p.assets.find(x=>x.id===a.effectiveAssetId)?.path||a.effectiveAssetId):''}`).join('\n')}\n\n## 事件记录\n\n${p.events.map(e=>`- ${e.at} ${e.jobId||''} [${e.kind}] ${e.message}`).join('\n')}\n\n## 待人工审核\n\n人物身份、口型、台词发音、声音归属、运动连续性、剧情表达及艺术质量需人工或外部AI复核。抽帧与静音检测只是线索，不能自动证明生成合格。\n`;}
 

@@ -77,7 +77,7 @@ export function classifyHTTP(status, body, posting=false){
   return posting?'unknown':'poll_error';
 }
 export function friendlyError(error){
-  if(error?.xaiOperation==='output-write'&&['InvalidStateError','NoModificationAllowedError','NotReadableError'].includes(error.name))return '无法保存 '+(error.xaiPath||'目录记录')+'：文件状态已变化或被其他程序占用。请关闭占用后重试保存；浏览器记录保留。';
+  if(error?.xaiOperation==='output-write'&&['InvalidStateError','NoModificationAllowedError','NotReadableError','AbortError','WriteVerificationError'].includes(error.name)){const stage={open:'打开',write:'写入',close:'提交',verify:'核验'}[error.xaiStage];return '无法保存 '+(error.xaiPath||'目录记录')+(stage?'（'+stage+'阶段）':'')+'：'+(error.xaiAttempts?'已自动尝试 '+error.xaiAttempts+' 次，':'')+'目录文件暂不可写或状态变化。请重试保存或重新选择输出目录；浏览器记录保留。';}
   if(['InvalidStateError','NotReadableError'].includes(error?.name))return '原文件当前不可读取，可能已被移动、替换或占用。请重新选择原文件，再重试此项。';
   if(error?.name==='NotAllowedError')return '本地文件权限被拒绝，请重新授权文件夹。';
   if(error?.name==='QuotaExceededError')return '浏览器本地空间不足，请导出记录并腾出磁盘空间。';

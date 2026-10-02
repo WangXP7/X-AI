@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="X-AI 1.1.3详细设计：产品、界面、架构、数据、文件、递归引用、队列、校验、恢复、部署与开发交接。">
+<meta name="description" content="X-AI 1.1.4详细设计：产品、界面、架构、数据、文件、递归引用、队列、校验、恢复、部署与开发交接。">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
-<title>X-AI 1.1.3 · 详细设计文档</title>
+<title>X-AI 1.1.4 · 详细设计文档</title>
 <style>
 *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;color:#262c3c;background:#f5f4f8;font:16px/1.85 'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif}
 a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{position:fixed;inset:0 auto 0 0;width:310px;overflow:auto;padding:28px 23px;background:#f9f7fd;border-right:1px solid #e0d9ef}.reader-brand{font-size:25px;font-weight:800;letter-spacing:1px;color:#2c2546}.reader-brand small{font-size:15px;font-weight:500;display:block;letter-spacing:0;color:#746686;margin-top:4px}.reader-meta{margin:16px 0 20px;font-size:14px;line-height:1.75;color:#6b607a}.reader-nav nav{display:grid;gap:5px}.reader-nav nav a{display:block;text-decoration:none;font-size:14px;line-height:1.6;padding:6px 8px;border-radius:6px}.reader-nav nav a:hover{background:#eae3f7}.reader-nav .level-2{font-weight:650;border-top:1px solid #ebe5f2;padding-top:12px;margin-top:4px}.reader-nav .level-3{padding-left:20px;color:#6b607a}
@@ -15,7 +15,7 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 @media print{body{background:white;font-size:11pt;color:#111}.reader-nav,.document-bar,.anchor{display:none}.document{margin:0;padding:0;max-width:none}.paper{border:0;padding:0;max-width:none;box-shadow:none}h1{font-size:24pt}h2{break-before:auto;font-size:17pt}h3{font-size:13pt}h1,h2,h3{break-after:avoid}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f2f2;color:#222}pre code{white-space:pre-wrap;color:#222}.table-scroll{overflow:visible;border:0}table{min-width:0;font-size:9pt}tr{break-inside:avoid}.diagram{break-inside:avoid}details{display:none}a{color:inherit}}
 </style></head><body>
-<aside class="reader-nav"><div class="reader-brand">X-AI <small>详细设计文档 · 1.1.3</small></div><p class="reader-meta">基准：2026-10-02 · 北京时间<br>实现、验证与扩展分别说明<br>正文约 59,564 字符 · 31 章</p><nav aria-label="文档目录"><a class="level-2" href="#section-2">0. 阅读方式、状态标记与依据</a>
+<aside class="reader-nav"><div class="reader-brand">X-AI <small>详细设计文档 · 1.1.4</small></div><p class="reader-meta">基准：2026-10-02 · 北京时间<br>实现、验证与扩展分别说明<br>正文约 61,621 字符 · 32 章</p><nav aria-label="文档目录"><a class="level-2" href="#section-2">0. 阅读方式、状态标记与依据</a>
 <a class="level-3" href="#section-3">0.1 阅读路径</a>
 <a class="level-3" href="#section-4">0.2 文档用语</a>
 <a class="level-3" href="#section-5">0.3 依据与冲突处理</a>
@@ -170,17 +170,23 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 <a class="level-3" href="#section-154">30.2 原始素材导入统一规则</a>
 <a class="level-3" href="#section-155">30.3 优化文件、映射与旧记录</a>
 <a class="level-3" href="#section-156">30.4 写入顺序与错误恢复</a>
-<a class="level-3" href="#section-157">30.5 实际验证与升级操作</a></nav></aside>
-<main class="document"><div class="document-bar"><span>可直接双击阅读 · 无脚本 / 无联网依赖</span><a href="./X-AI详细设计文档.md" download>下载 Markdown 源文档</a><a href="../README.md">项目使用说明</a><span>可用浏览器 Ctrl+P 打印</span></div><article class="paper"><h1 id="section-1">X-AI 1.1.3 详细设计文档<a class="anchor" href="#section-1" aria-label="链接到本节">#</a></h1>
+<a class="level-3" href="#section-157">30.5 实际验证与升级操作</a>
+<a class="level-2" href="#section-158">31. 版本 1.1.4 目录写入反复失败修复</a>
+<a class="level-3" href="#section-159">31.1 新证据、已定位缺陷与诊断边界</a>
+<a class="level-3" href="#section-160">31.2 稳定本地写入协议</a>
+<a class="level-3" href="#section-161">31.3 检查点与批量映射刷新</a>
+<a class="level-3" href="#section-162">31.4 诊断和用户操作</a>
+<a class="level-3" href="#section-163">31.5 实际验证与版本保留</a></nav></aside>
+<main class="document"><div class="document-bar"><span>可直接双击阅读 · 无脚本 / 无联网依赖</span><a href="./X-AI详细设计文档.md" download>下载 Markdown 源文档</a><a href="../README.md">项目使用说明</a><span>可用浏览器 Ctrl+P 打印</span></div><article class="paper"><h1 id="section-1">X-AI 1.1.4 详细设计文档<a class="anchor" href="#section-1" aria-label="链接到本节">#</a></h1>
 <blockquote>
 <p>产品：X-AI · 本地视频创作台<br>
-版本沿革：1.0 原设计；1.1 同名素材、自动关联、筛选与创作项目；1.1.1 单段互斥试听 / 试看；1.1.2 本地启动与连接恢复；1.1.3 原素材只引用与文件状态恢复。新增与变更详见第 27—30 章。<br>
+版本沿革：1.0 原设计；1.1 同名素材、自动关联、筛选与创作项目；1.1.1 单段互斥试听 / 试看；1.1.2 本地启动与连接恢复；1.1.3 原素材只引用与文件状态恢复；1.1.4 目录写入重试与批量映射保存。新增与变更详见第 27—31 章。<br>
 文档基准日期：2026-10-02（北京时间）<br>
 代码目录：<code>D:\PRIVACY-REDACTED\REDACTED-DIR</code><br>
 面向读者：产品负责人、普通使用者、前端开发者、音视频开发者、测试人员及接手开发的 AI。<br>
 文档性质：当前实现说明 + 设计约束 + 扩展方案。不是服务商永久规格承诺，也不是历史视频生产已全部完成的证明。</p>
 </blockquote>
-<p>当前文档正文按 <strong>1.1.3</strong> 实际实现维护。第 27 章单独记录 <strong>1.1</strong> 新增与变更，第 28 章记录 <strong>1.1.1</strong> 播放补充，第 29 章记录 <strong>1.1.2</strong> 启动修复，第 30 章记录 <strong>1.1.3</strong> 素材导入修复；历史验证保留原日期和版本，不能当成新功能的验证结果。</p>
+<p>当前文档正文按 <strong>1.1.4</strong> 实际实现维护。第 27 章单独记录 <strong>1.1</strong> 新增与变更，第 28 章记录 <strong>1.1.1</strong> 播放补充，第 29 章记录 <strong>1.1.2</strong> 启动修复，第 30 章记录 <strong>1.1.3</strong> 素材导入修复，第 31 章记录 <strong>1.1.4</strong> 目录写入修复；历史验证保留原日期和版本，不能当成新功能的验证结果。</p>
 <h2 id="section-2">0. 阅读方式、状态标记与依据<a class="anchor" href="#section-2" aria-label="链接到本节">#</a></h2>
 <h3 id="section-3">0.1 阅读路径<a class="anchor" href="#section-3" aria-label="链接到本节">#</a></h3>
 <div class="table-scroll"><table>
@@ -203,12 +209,12 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 </tr>
 <tr>
 <td>接手开发者 / AI</td>
-<td>第 7、8、10—15、17、19—25、27—30 章</td>
+<td>第 7、8、10—15、17、19—25、27—31 章</td>
 <td>源码、数据协议、状态机、不重复计费、测试和扩展</td>
 </tr>
 <tr>
 <td>测试人员</td>
-<td>第 9、12—16、20、23、26—30 章</td>
+<td>第 9、12—16、20、23、26—31 章</td>
 <td>限制、失败分类、版本恢复、验收场景</td>
 </tr>
 </tbody></table>
@@ -359,7 +365,7 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 </tr>
 <tr>
 <td>品牌署名</td>
-<td>X-AI 1.1.3 与 ® YiQiXP 同一行，下一行统一字体标语</td>
+<td>X-AI 1.1.4 与 ® YiQiXP 同一行，下一行统一字体标语</td>
 <td>不恢复此前被否定的多行版权日期块</td>
 </tr>
 </tbody></table>
@@ -411,7 +417,7 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 <ul>
 <li>Logo：<code>assets/logo.svg</code>，64×64 viewBox；深色圆角底、两条交叉 X 形带、紫色渐变、中央播放三角的组合。</li>
 <li>标准名称：X-AI；辅标 VIDEO STUDIO。</li>
-<li>左下版本：<code>X-AI 1.1.3　® YiQiXP</code>，同一行。</li>
+<li>左下版本：<code>X-AI 1.1.4　® YiQiXP</code>，同一行。</li>
 <li>最底标语：<code>让X-AI和你创造属于你的故事</code>；继承整体字体，14px、常规字形、两行完整短句“让X-AI和你创造”“属于你的故事”，不留单字孤行。</li>
 <li>标语卡：明确两行“你的文件，” / “你的电脑”；两行同左边缘。</li>
 <li>操作指南：描边书本 SVG；圆圈符号已替换，避免误认为单选选中状态。</li>
@@ -650,6 +656,11 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 <td>saveProject、readAsset、backupReferences、restoreProjectFiles</td>
 </tr>
 <tr>
+<td>src/local-write.js</td>
+<td>1.1.4稳定字节、本地写入退避、重开句柄、提交回读核验</td>
+<td>durableWrite、pathParts、WRITE_BACKOFF</td>
+</tr>
+<tr>
 <td>src/credentials.js</td>
 <td>普通密钥、默认配置、高级保险箱、固定反馈</td>
 <td>initialize、loadDefault、unlock、useNew</td>
@@ -695,6 +706,8 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 <li><code>x-ai-production-runner</code>：队列运行锁。</li>
 <li><code>x-ai-auth-http</code>：认证请求锁，等待节流并发出请求。</li>
 <li><code>saveProject</code> 内部 Promise 链：串行写项目快照，避免保存相互覆盖。</li>
+<li><code>writeFile</code> 内部 Promise 链：串行打开、写入、提交并回读验证本地文件。1.1.4最多5次有限重试，失败不会阻塞后续补保存。</li>
+<li><code>saveProject(...,{deferMapping:true})</code>：只用于素材批处理的逐项检查点，映射在结束 / 停止时统一刷新；入队和收费请求前完整保存，不延后必要检查点。</li>
 <li><code>serialFF</code>：串行使用单个 FFmpeg 引擎。</li>
 <li><code>ensureIdle</code>：目录、素材、递归解析或队列运行时限制会改写记录的操作。</li>
 <li>创作项目选择仅改草稿与成员，可在 Runner 运行期间进行；素材、目录处理期间禁止切换，实际资产变更仍受 ensureIdle 限制。</li>
@@ -2997,5 +3010,63 @@ node tools/build-design-doc.mjs</code></pre></div>
 <p>第6组确认无源句柄 / 缓存的旧前缀记录能从现有历史文件回读并验证SHA，保留原ID和原文件名，不批量重命名。成功补保存后清除逐项待保存提示。ZIP独立9项CRC与SHA检查通过。HTML31章125节、页内目标缺失0、脚本 / 外部请求0，桌面和390px阅读无横向溢出。</p>
 <p>原素材库8组、CSV目录与备份10组、递归引用6组、Studio / 版式7组复测通过。损坏文件仍逐项报告，停止 / 继续、ZIP、声音M4A同名编码、源文件变化阻止提交继续正常。没有真实付费API调用，没有修改用户生产素材；证据在Git忽略的test-results目录和验证记录中。</p>
 <p>升级本机页面后重新加载1.1.3；若旧轮次暂停且文件来自旧输入，可重新选择原件，系统按同名和SHA复用已有成功素材，再处理剩余项。浏览器缓存和历史输出保留；不会借升级自动重发任何云端任务。文档第27—29章保留此前版本设计和测试，第30章明确本轮新增与修复。</p>
+<h2 id="section-158">31. 版本 1.1.4 目录写入反复失败修复<a class="anchor" href="#section-158" aria-label="链接到本节">#</a></h2>
+<h3 id="section-159">31.1 新证据、已定位缺陷与诊断边界<a class="anchor" href="#section-159" aria-label="链接到本节">#</a></h3>
+<p>用户新截图明确显示无法保存reference-mapping.json，素材和浏览器记录已经保存。这属于输出目录元数据写入，不是声音格式、不符合尺寸或AgnesAI拒绝。1.1.3只解决稳定读取、同页串行和中文错误分层；createWritable、write、close失败后仍直接停止，并要求人手重试，没有处理短暂目录文件状态失效，因此前一版修复不完整。</p>
+<p>同时，saveProject在每项素材保存和页面onChange时无条件重写project.json和reference-mapping.json，即使映射没有变化也更新时间并重写。102项导入产生大量相同目标写入，增加遇到文件替换、同步盘、扫描程序、浏览器底层状态变化的机会。此项是源码可确认的放大因素，不把它当成已证实的外部占用程序。新版诊断记录准确阶段，持续外部阻碍仍需用户更换输出目录或处理其权限 / 占用，不宣称只凭截图已找出具体Windows进程。</p>
+<h3 id="section-160">31.2 稳定本地写入协议<a class="anchor" href="#section-160" aria-label="链接到本节">#</a></h3>
+<p><code>src/local-write.js</code>实现durableWrite；storage.writeFile保留Promise串行，进入队列后调用此协议。目录权限先检查，相对路径禁止越界，文件名不加哈希或临时前缀。输入Blob / File在打开目标前读取完整稳定字节，计算预期SHA-256；源素材File不会在重试过程中重新读取成另一份内容。</p>
+<p>每次尝试都从目录句柄重新查找各级目录和文件，不复用失败的FileSystemFileHandle或流。createWritable使用mode=exclusive，write写入稳定Blob，close提交后再getFile并立即读成稳定字节，比较SHA。只有实际目标内容等于预期才成功返回；优化文件、视频、检查点使用相同的基本写入核验。</p>
+<p>只对InvalidStateError、NotReadableError、NoModificationAllowedError、AbortError有限重试：首次失败后等待150、450、1000、2000毫秒，最多5次尝试。失败流尝试abort，下一次重开。NotAllowedError和QuotaExceededError立即反馈权限 / 空间问题，不反复弹授权或无限等候。WriteVerificationError说明实际内容与预期不一致，不自动宣称通过。</p>
+<p>close或回读阶段抛短暂错误时，可能已经提交成功。先重新获取文件并比对目标SHA，若内容完全一致，记录verified-after-error并结束，不重复重写。若不一致或当前仍不可读，再按有限退避恢复。失败不会阻塞后续点击“重试目录保存”；不采用删除目标文件、换名逃过错误或丢失既有路径的办法。</p>
+<h3 id="section-161">31.3 检查点与批量映射刷新<a class="anchor" href="#section-161" aria-label="链接到本节">#</a></h3>
+<p>每个成功导入 / 优化仍先写浏览器记录，再保存派生媒体及逐项project.json。AssetLibrary.persistAsset向saveProject传deferMapping=true，本轮结束、主动停止或失败暂停时通过onChange完整刷新reference-mapping.json。即使用户暂停，已完成素材的映射也尝试保存；未完成项不伪装完成。</p>
+<p>saveProject保存前读取现有JSON内容：project.json快照相同则跳过；reference-mapping.json比较mappings数组，不因仅at时间变化而重写。读取或JSON解析短暂失效会走实际重写；磁盘映射损坏或被修改会重建，不能仅依靠内存“上次已保存”缓存跳过。映射无变化时保留上次at，表示上次实际刷新时间。</p>
+<p>批处理最终保存期间，busy和aria-busy仍为true，不能提前点完成或切项目。保存成功才显示处理结束；最终映射持续失败则显示“素材已处理 · 目录保存待重试”，标记recordPending并保留浏览器记录。已有优化文件不重新产生版本。点击“重试目录保存”补待保存媒体和完整映射，不重新导入、复制原件或构造新收费任务。</p>
+<p>project.json与reference-mapping.json是两个独立文件，浏览器API不提供跨两文件事务；项目先保存、映射失败时会明确留下待保存状态。恢复后project.json仍是源记录，映射可以重建。队列入队 / 提交前的requireDisk完整保存沿用原行为，禁止通过deferMapping跳过付费任务检查点；已知video_id、旧Attempt、实际输入哈希不改变。</p>
+<h3 id="section-162">31.4 诊断和用户操作<a class="anchor" href="#section-162" aria-label="链接到本节">#</a></h3>
+<p>state/write-diagnostics最多保存50条本地异常或恢复记录，每条含at、目标相对路径、stage、code、attempts、outcome。outcome为retry、failed、recovered或verified-after-error。记录不含媒体字节、授权头、密钥、提示词或绝对磁盘地址；诊断保存失败不能反过来让已成功写入失败。</p>
+<p>最终中文提示说明目标文件、打开 / 写入 / 提交 / 核验阶段及已尝试次数，不笼统把所有错误认定为“原素材坏了”或确定“被其它程序占用”。“下载处理记录”附本轮相关诊断，便于后续确定失败发生在哪个API调用。打开阶段恢复后成功显示正常完成，短暂重试不必要求用户逐项操作。</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>实际状态</th>
+<th>用户动作</th>
+<th>结果</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>短暂目录状态失败后成功</td>
+<td>等待自动重试</td>
+<td>核对字节后继续，不重复导入</td>
+</tr>
+<tr>
+<td>持续目录文件不可写</td>
+<td>重试目录保存、必要时重新选择输出目录</td>
+<td>浏览器记录保留，只补保存</td>
+</tr>
+<tr>
+<td>源文件不可读</td>
+<td>重新选择原文件</td>
+<td>仍由原素材读取流程处理，不误做目录写入重试</td>
+</tr>
+<tr>
+<td>权限拒绝 / 空间不足</td>
+<td>重新授权 / 腾出空间 / 选择可写目录</td>
+<td>不盲重试，不清空历史</td>
+</tr>
+<tr>
+<td>需要排查复发</td>
+<td>下载处理记录</td>
+<td>查看本轮路径、阶段、错误码与尝试结果</td>
+</tr>
+</tbody></table>
+</div>
+<p>更新后先完成或停止旧页面当前项，再刷新确认左下版本1.1.4。已选择句柄和浏览器记录沿用同一网址的IndexedDB；不清空数据、不更换端口来掩盖保存失败。持续外部问题不是靠改英文提示解决，核验未通过绝不显示磁盘已保存。</p>
+<h3 id="section-163">31.5 实际验证与版本保留<a class="anchor" href="#section-163" aria-label="链接到本节">#</a></h3>
+<p>2026-10-02新增local-write.test.mjs的8项规则测试通过，与既有49项合计57项：分别注入打开 / 写入 / 提交短暂失败，确认重开、退避、SHA；提交成功后报错仅核验一次；持续失败最多5次；权限和空间错误不重试；写入错误字节不能返回成功；源字节在打开之前固定。</p>
+<p>local-write-browser.mjs新增6组真实浏览器OPFS验证通过：102项实际文件句柄批量导入，最终映射连续2次InvalidStateError后第3次成功，102个映射齐全；未产生references原件；重复保存不改映射；损坏映射重建；持续映射失败5次后保留102素材，单独补保存成功且不重复导入；处理记录含失败阶段；真实流close提交后故意报错，回读正确即确认，实际close只有一次。页面异常和外部请求为0。</p>
+<p>原source-assets-browser.mjs的6组再通过，原件哈希、有效优化输入、历史video_id和旧前缀兼容保持。所有文件是合成测试数据，不操作用户生产素材，不调用实际收费服务。当前修复覆盖可复现的浏览器写入失败路径；不是宣称用户未知的同步程序、权限设置或磁盘状态都已自动修好。旧版第30章保留1.1.3设计和验证，当前新增在第31章标为1.1.4。</p>
+<p>完整浏览器17组、素材库8组、CSV目录10组在1.1.4再次通过；完整媒体两镜拼接8.021秒并通过WASM解码，未知POST不重发与90秒节流不受本地重试影响。ZIP独立9项CRC与SHA核验通过。HTML当前32章130节、脚本 / 外部请求 / 目录缺失0，桌面和390px无横向溢出。初次完整测试末尾所需专用前缀服务未启动，补充独立子服务后全过，未把连接拒绝忽略为成功。</p>
 <footer class="reader-footer">本文由同目录 Markdown 生成。以当前源码和用户最新要求核对；未实现功能与未执行检查不得冒充完成。® YiQiXP</footer></article></main>
 </body></html>
