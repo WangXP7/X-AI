@@ -34,7 +34,8 @@ export function inspectQueue(project,runner={},at=Date.now()){
   if(remote?.state==='blocked')return {code:'blocked',message:`${remote.id} 尚未释放原任务：${remote.error||'正在核验恢复条件'}`,canStart:false};
   if(runner.running){
     const activity=runner.activity||{},waitUntil=Math.max(activity.waitUntil||0,activity.kind==='waiting'?runner.transport?.nextAt||0:0);
-    if(waitUntil>at)return {code:'waiting',message:`遵守请求间隔，${Math.ceil((waitUntil-at)/1000)} 秒后自动继续`,canStart:false};
+    if(activity.kind==='recovery')return {code:'download-recovery',message:waitUntil>at?`原视频下载重试将在 ${Math.ceil((waitUntil-at)/1000)} 秒后继续；已保存的原片会优先恢复`:'正在恢复原片下载，保留原任务编号',canStart:false};
+    if(waitUntil>at)return {code:'waiting',message:`${activity.label||'遵守请求间隔'}，${Math.ceil((waitUntil-at)/1000)} 秒后自动继续`,canStart:false};
     if(runner.localChecks?.size&&!runner.activeUid)return {code:'local',message:'原片已保存，正在后台技术校验；下一镜无需等待内容审核',canStart:false};
     const age=activity.updatedAt?at-activity.updatedAt:0;
     return {code:age>45000?'slow':'running',message:age>45000?`当前步骤已等待 ${Math.floor(age/1000)} 秒，超时保护仍在运行`:'调度器正在处理，进度正常跟踪',canStart:false};

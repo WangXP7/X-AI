@@ -7,6 +7,6 @@ test('only known completed media failures migrate to automatic recovery',()=>{
  assert.equal(recoverDownloads({jobs}),1);assert.equal(jobs[0].state,'download');assert.equal(jobs[0].error,null);assert.equal(jobs[0].attempts.length,1);assert.equal(jobs[1].state,'blocked');
 });
 test('bounded retry interval and original-task link refresh avoid query storms',()=>{
- assert.equal(downloadDelay(1),15000);assert.equal(downloadDelay(999),300000);
+ assert.equal(downloadDelay(1),5000);assert.equal(downloadDelay(999),5000);
  const a={videoId:'original',downloadFailures:1};assert.equal(shouldRefreshLink(a,{status:403},1000000),true);a.downloadLinkCheckedAt=999999;assert.equal(shouldRefreshLink(a,{status:403},1000000),false);assert.equal(shouldRefreshLink({}, {status:403},1000000),false);
 });

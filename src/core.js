@@ -91,7 +91,7 @@ export function friendlyError(error){
   return String(error?.message||error).replace(/sk-[\w-]{12,}/g,'[密钥已隐藏]').slice(0,220);
 }
 export function newJob(spec){const resolved=promptSpec(spec);return {...resolved,uid:uid(),prompt:cleanPrompt(resolved.prompt),seconds:Number(resolved.seconds),state:'pending',attempts:[],current:null,createdAt:now(),updatedAt:now(),review:'pending'};}
-export function makeProject(){return {schema:'x-ai-project-v1',id:uid(),name:'我的视频项目',createdAt:now(),updatedAt:now(),jobs:[],assets:[],episodes:[],events:[],settings:{origin:ORIGINS[0],connection:'direct',gap:90}};}
+export function makeProject(){return {schema:'x-ai-project-v1',id:uid(),name:'我的视频项目',createdAt:now(),updatedAt:now(),jobs:[],assets:[],episodes:[],events:[],settings:{origin:ORIGINS[0],connection:'direct',submitGap:61}};}
 export function safeExternalURL(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password?u.href:null;}catch{return null;}}
 export function validateProjectFile(p){
   const fail=()=>{throw Error('项目记录格式不正确或包含不安全字段。');};
@@ -140,7 +140,7 @@ export function validateProjectFile(p){
     for(const name of ['diskPending','recordPending'])if(a[name]!==undefined&&typeof a[name]!=='boolean')fail();
     if(a.effectiveAssetId&&!p.assets.some(x=>x.id===a.effectiveAssetId&&x.derivedFrom===a.id))fail();assetIDs.add(a.id);}
   for(const e of p.episodes)if(!safeID(e.id)||!Number.isInteger(e.version)||!Number.isFinite(e.seconds)||!Array.isArray(e.inputs)||!path(e.path)||!key(e.blobKey))fail();
-  p.settings.gap=Math.max(90,Math.min(3600,Number(p.settings.gap)||90));return p;
+  p.settings.submitGap=Math.max(61,Math.min(3600,Number(p.settings.submitGap)||61));return p;
 }
 export function recordEvent(project,kind,message,jobId){project.events.push({at:now(),kind,message: redactedText(message),jobId});project.updatedAt=now();}
 function redactedText(text){return typeof text==='string'?redact(text):JSON.stringify(redact(text));}

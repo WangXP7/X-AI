@@ -39,7 +39,8 @@ class Handler(SimpleHTTPRequestHandler):
 
     def end_headers(self):
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Cache-Control', 'no-store' if '/private/' in self.path else 'no-cache')
+        source = urlsplit(self.path).path
+        self.send_header('Cache-Control', 'no-store' if '/private/' in source or source.endswith('.js') else 'no-cache')
         super().end_headers()
 
 if __name__ == '__main__':

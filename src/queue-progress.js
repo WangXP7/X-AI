@@ -21,7 +21,7 @@ export function queueProgress(project,runner={},at=Date.now()){
   const responseMs=responseAt?at-(typeof responseAt==='string'?Date.parse(responseAt):responseAt):null;
   let label,detail,percent=null,indeterminate=false;
   if(runner.assembling){label=activity.label||'正在本地拼接';detail='输入镜头与成片都保存在本地';percent=reportedProgress(activity.percent);indeterminate=percent===null;}
-  else if(busy&&activity.kind==='waiting'){label=seconds?`等待请求间隔 · ${seconds} 秒后继续`:'正在准备下一次查询';detail='页面持续跟踪；请求间隔与退避仍生效';indeterminate=true;}
+  else if(busy&&activity.kind==='waiting'){label=seconds?`${activity.label||'等待请求间隔'} · ${seconds} 秒后继续`:'正在准备下一次请求';detail=activity.operation==='submit'?'生成提交按独立时间槽排队，查询与下载不占用该间隔':activity.operation==='media'?'仅调整下载频率，原视频与任务编号保留':'按查询节奏跟踪状态，完成后立即下载';indeterminate=true;}
   else if(busy&&activity.kind==='requesting'){label=activity.label||'正在查询服务端';detail=`本次请求已等待 ${elapsedText(at-activity.startedAt)}，最长等待 180 秒`;indeterminate=true;}
   else if(busy&&activity.kind==='recovery'){label=activity.label||'正在自动恢复下载';detail=activity.waitUntil?`预计 ${Math.max(0,Math.ceil((activity.waitUntil-at)/1000))} 秒后自动重试；原任务已保留`:'等待网络恢复，程序会自动继续';indeterminate=true;}
   else if(busy&&activity.kind==='download'){label=activity.label||'正在下载视频';const bytes=activity.bytes||0,total=activity.total||0;detail=`已接收 ${(bytes/1_000_000).toFixed(2)} MB`+(total?` / ${(total/1_000_000).toFixed(2)} MB`:' · 文件总大小未提供');percent=total?Math.min(100,bytes/total*100):null;indeterminate=percent===null;}

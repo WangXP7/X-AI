@@ -6,10 +6,11 @@ export class ConnectionError extends Error{
     const reason=timeout?'请求超时':error?.status===403&&connection==='bridge'?'本机配对码或页面来源不匹配':error?.status?'接口返回 '+error.status:connection==='bridge'?'无法连接本机连接器':connection==='local'?'本机视频下载通道中断，原地址保留':'浏览器未能读取响应（网络或跨域问题）';
     super(label+'失败：'+reason+'。'+(operation==='media'?'原任务与视频地址已保留，程序将自动恢复下载。':operation==='submit'?'提交结果可能不明，先核实原任务，不能重复提交。':'已有任务编号保留，请修复连接后继续查询。'));
     this.name='ConnectionError';this.operation=operation;this.connection=connection;this.code=timeout?'timeout':error?.status?'http_'+error.status:'fetch_unreadable';
+    this.code=({EmptyDownload:'empty_download',IncompleteDownload:'incomplete_download',InvalidMedia:'invalid_media',CorruptDownload:'decode_failed'})[error?.name]||this.code;
     this.status=error?.status;this.permanent=!!error?.permanent;
   }
 }
-export function networkRecord(error){return error instanceof ConnectionError?{at:new Date().toISOString(),operation:error.operation,connection:error.connection,code:error.code,message:error.message}:null;}
+export function networkRecord(error){return error instanceof ConnectionError?{at:new Date().toISOString(),operation:error.operation,connection:error.connection,code:error.code,message:error.message,...(error.retryAt?{retryAt:error.retryAt}:{}),...(error.diagnostic?{diagnostic:error.diagnostic}:{})}:null;}
 export function taskProblem(job){
   const a=job.attempts?.at(-1),status=String(a?.pollResponse?.status||'').toLowerCase(),completed=!!a?.url||['completed','success','succeeded'].includes(status);
   if(job.state==='blocked'&&completed&&!job.current){

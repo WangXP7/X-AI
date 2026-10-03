@@ -78,5 +78,11 @@ class MediaTests(unittest.TestCase):
             with self.request() as r:
                 with self.assertRaises(Exception):r.read()
 
+    def test_media_429_retains_upstream_retry_after(self):
+        with patch('local_media.valid_media_url',side_effect=lambda u:u),patch('local_media.urllib.request.build_opener') as opener:
+            opener.return_value.open.side_effect=urllib.error.HTTPError('https://example.test',429,'Rate limited',{'Retry-After':'25'},None)
+            with self.request() as r:
+                data=json.loads(r.read());self.assertEqual(data['upstreamStatus'],429);self.assertEqual(data['retryAfter'],'25')
+
 
 if __name__=='__main__':unittest.main()
