@@ -112,12 +112,12 @@ class DetachedStartupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='x-ai-startup-integration-') as directory:
             root = Path(directory)
             (root / 'tools').mkdir()
-            for name in ['local_runtime.py', 'launch.py', 'serve.py', 'local_media.py', 'media_session.py', 'connector.py']:
+            for name in ['local_runtime.py', 'launch.py', 'serve.py', 'local_media.py', 'media_session.py', 'connector.py', 'process_lifetime.py', 'background.py']:
                 shutil.copyfile(REPO / 'tools' / name, root / 'tools' / name)
             (root / 'package.json').write_text('{"version":"startup-test"}', encoding='utf-8')
             (root / 'index.html').write_text('<h1>X-AI isolated startup test</h1>', encoding='utf-8')
             port = free_port()
-            command = [sys.executable, str(root / 'tools' / 'launch.py'), '--port', str(port), '--no-browser']
+            command = [sys.executable, str(root / 'tools' / 'launch.py'), '--port', str(port), '--no-browser', '--no-watchdog']
             parents = [subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                        for _ in range(2)]
             state = None

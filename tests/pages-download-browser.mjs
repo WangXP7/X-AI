@@ -9,6 +9,7 @@ import {resolve,sep} from 'node:path';
 import {sealLocalDefault} from '../src/local-default.js';
 const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_PATH||'playwright');
 const root=resolve('.'),base='https://wangxp7.github.io/X-AI/';
+const release='v'+JSON.parse(await readFile('package.json','utf8')).version.replaceAll('.','');
 const url='https://cos-platform-outputs.agnes-ai.cn/videos/agnes-video-2.5/task_vuPCudMYJKN3P9Po28Ek4IN6rmV6rYIA.mp4';
 const browser=await chromium.launch({channel:'msedge',headless:true}),events=[],errors=[];
 const secrets=await sealLocalDefault('sk-synthetic-pages-download-only');
@@ -79,10 +80,10 @@ try{
     const r=new Runner(()=>({project:p,folder}),()=>{const value=j.attempts[0].downloadWaitingFor;if(value&&!phases.includes(value))phases.push(value);},()=>{}),start=Date.now();
     await r.start({automatic:true});return {elapsedMs:Date.now()-start,state:j.state,phases,failures:j.attempts[0].downloadFailures,decode:j.current?.qa.fullDecode,attempts:j.attempts.length};
   },url);
-  assert.equal(recovered.state,'ready');assert.equal(recovered.decode,'passed');assert.equal(recovered.failures,1);assert.equal(recovered.attempts,1);assert.deepEqual(recovered.phases,['download-channel']);assert.ok(recovered.elapsedMs>=30000&&recovered.elapsedMs<90000);
+  assert.equal(recovered.state,'ready');assert.equal(recovered.decode,'passed');assert.equal(recovered.failures,1);assert.equal(recovered.attempts,1);assert.deepEqual(recovered.phases,['local-service']);assert.ok(recovered.elapsedMs>=30000&&recovered.elapsedMs<90000);
   const raw=Buffer.from(result.raw,'base64');delete result.raw;assert.equal(createHash('sha256').update(raw).digest('hex'),result.sha256);
-  await mkdir('test-results',{recursive:true});await writeFile('test-results/S04-pages-v126.mp4',raw);
+  await mkdir('test-results',{recursive:true});await writeFile(`test-results/S04-pages-${release}.mp4`,raw);
   assert.deepEqual(errors,[]);assert.ok(!events.some(x=>x.forbiddenGenerationAPI));
   const output={browser:browser.version(),security:'Normal browser security; local-network permission tested denied and granted explicitly',staticSource:'local release served at the real Pages origin by isolated test routing; not a live deployment',upstream:'real S04 CDN through real loopback server; no mock',denied:deniedResult,result,renewed,recovered,events,errors};
-  await writeFile('test-results/pages-download-v126-results.json',JSON.stringify(output,null,2));console.log(JSON.stringify(output,null,2));
+  await writeFile(`test-results/pages-download-${release}-results.json`,JSON.stringify(output,null,2));console.log(JSON.stringify(output,null,2));
 }finally{await browser.close();}

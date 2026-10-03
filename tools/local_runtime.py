@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+from process_lifetime import job_lifetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -16,4 +17,4 @@ def workspace_id(root=ROOT):
 def server_identity():
     package = json.loads((ROOT / 'package.json').read_text(encoding='utf-8-sig'))
     return {'app': APP_ID, 'workspace': workspace_id(),
-            'version': package['version'], 'pid': os.getpid()}
+            'version': package['version'], 'pid': os.getpid(), 'lifetime': job_lifetime()}

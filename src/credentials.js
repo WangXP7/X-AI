@@ -13,8 +13,8 @@ function checkVault(value){
 }
 
 export class CredentialsPanel {
-  constructor({transport,bind,ensureIdle,onConnectionChange,event,save}){
-    Object.assign(this,{transport,ensureIdle,onConnectionChange,event,save});
+  constructor({transport,bind,onConnectionChange,event,save}){
+    Object.assign(this,{transport,onConnectionChange,event,save});
     this.sources={};this.selected='';this.busy=false;this.verified=false;this.tab='saved';this.openSequence=0;this.activeLabel='';this.defaultKey='';this.defaultState='loading';this.kind='';
     bind('#basic-key-form','submit',e=>{e.preventDefault();return this.action(async()=>{
       const key=$('#basic-api-key').value.trim();
@@ -62,7 +62,7 @@ export class CredentialsPanel {
   toggleInput(inputId,buttonId){const input=$(inputId),visible=input.type==='password';input.type=visible?'text':'password';$(buttonId).textContent=visible?'隐藏':'显示';$(buttonId).setAttribute('aria-pressed',String(visible));}
   async initialize(){
     await this.loadDefault();if(this.defaultKey)this.activateDefault();
-    this.render();this.onConnectionChange();
+    this.render();this.onConnectionChange({credentialChanged:!!this.transport.key});
   }
   async loadDefault(){
     this.defaultState='loading';
@@ -96,9 +96,12 @@ export class CredentialsPanel {
 
   async action(fn){
     if(this.busy)return;
-    try{this.ensureIdle();this.busy=true;this.clearFeedback();this.render();await fn();}
+    const previousKey=this.transport.key;
+    // Session credentials are independent of editing production records. A
+    // downloading/waiting job must not prevent enabling the key it may need.
+    try{this.busy=true;this.clearFeedback();this.render();await fn();}
     catch(e){this.feedback(friendlyError(e),'error');}
-    finally{this.busy=false;this.render();if(this.focusAfterError){$(this.focusAfterError).focus();this.focusAfterError=null;}this.onConnectionChange();}
+    finally{this.busy=false;this.render();if(this.focusAfterError){$(this.focusAfterError).focus();this.focusAfterError=null;}this.onConnectionChange({credentialChanged:previousKey!==this.transport.key});}
   }
   feedback(message,kind='info'){
     const target=$('#settings-feedback');target.hidden=false;target.className='settings-feedback '+kind;

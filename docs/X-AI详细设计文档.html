@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="X-AI 1.2.6详细设计：产品、界面、架构、数据、文件、递归引用、队列、校验、恢复、部署与开发交接。">
+<meta name="description" content="X-AI 1.2.7详细设计：产品、界面、架构、数据、文件、递归引用、队列、校验、恢复、部署与开发交接。">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
-<title>X-AI 1.2.6 · 详细设计文档</title>
+<title>X-AI 1.2.7 · 详细设计文档</title>
 <style>
 *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;color:#262c3c;background:#f5f4f8;font:16px/1.85 'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif}.paper p,.paper li{overflow-wrap:anywhere}
 a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{position:fixed;inset:0 auto 0 0;width:310px;overflow:auto;padding:28px 23px;background:#f9f7fd;border-right:1px solid #e0d9ef}.reader-brand{font-size:25px;font-weight:800;letter-spacing:1px;color:#2c2546}.reader-brand small{font-size:15px;font-weight:500;display:block;letter-spacing:0;color:#746686;margin-top:4px}.reader-meta{margin:16px 0 20px;font-size:14px;line-height:1.75;color:#6b607a}.reader-nav nav{display:grid;gap:5px}.reader-nav nav a{display:block;text-decoration:none;font-size:14px;line-height:1.6;padding:6px 8px;border-radius:6px}.reader-nav nav a:hover{background:#eae3f7}.reader-nav .level-2{font-weight:650;border-top:1px solid #ebe5f2;padding-top:12px;margin-top:4px}.reader-nav .level-3{padding-left:20px;color:#6b607a}
@@ -15,7 +15,7 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 @media print{body{background:white;font-size:11pt;color:#111}.reader-nav,.document-bar,.anchor{display:none}.document{margin:0;padding:0;max-width:none}.paper{border:0;padding:0;max-width:none;box-shadow:none}h1{font-size:24pt}h2{break-before:auto;font-size:17pt}h3{font-size:13pt}h1,h2,h3{break-after:avoid}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f2f2;color:#222}pre code{white-space:pre-wrap;color:#222}.table-scroll{overflow:visible;border:0}table{min-width:0;font-size:9pt}tr{break-inside:avoid}.diagram{break-inside:avoid}details{display:none}a{color:inherit}}
 </style></head><body>
-<aside class="reader-nav"><div class="reader-brand">X-AI <small>详细设计文档 · 1.2.6</small></div><p class="reader-meta">基准：2026-10-03 · 北京时间<br>实现、验证与扩展分别说明<br>正文约 99,523 字符 · 41 章</p><nav aria-label="文档目录"><a class="level-2" href="#section-2">0. 阅读方式、状态标记与依据</a>
+<aside class="reader-nav"><div class="reader-brand">X-AI <small>详细设计文档 · 1.2.7</small></div><p class="reader-meta">基准：2026-10-03 · 北京时间<br>实现、验证与扩展分别说明<br>正文约 102,414 字符 · 42 章</p><nav aria-label="文档目录"><a class="level-2" href="#section-2">0. 阅读方式、状态标记与依据</a>
 <a class="level-3" href="#section-3">0.1 阅读路径</a>
 <a class="level-3" href="#section-4">0.2 文档用语</a>
 <a class="level-3" href="#section-5">0.3 依据与冲突处理</a>
@@ -245,11 +245,18 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 <a class="level-3" href="#section-229">40.4 本机服务安全约束</a>
 <a class="level-3" href="#section-230">40.5 下载恢复状态与计时</a>
 <a class="level-3" href="#section-231">40.6 验收方法与证明边界</a>
-<a class="level-3" href="#section-232">40.7 文件与维护交接</a></nav></aside>
-<main class="document"><div class="document-bar"><span>可直接双击阅读 · 无脚本 / 无联网依赖</span><a href="./X-AI详细设计文档.md" download>下载 Markdown 源文档</a><a href="../README.md">项目使用说明</a><span>可用浏览器 Ctrl+P 打印</span></div><article class="paper"><h1 id="section-1">X-AI 1.2.6 详细设计文档<a class="anchor" href="#section-1" aria-label="链接到本节">#</a></h1>
+<a class="level-3" href="#section-232">40.7 文件与维护交接</a>
+<a class="level-2" href="#section-233">41. 1.2.7 本机服务保活、S06恢复与密钥操作</a>
+<a class="level-3" href="#section-234">41.1 本轮现场证据</a>
+<a class="level-3" href="#section-235">41.2 Windows独立启动</a>
+<a class="level-3" href="#section-236">41.3 本机守护规则</a>
+<a class="level-3" href="#section-237">41.4 密钥操作与任务编辑解耦</a>
+<a class="level-3" href="#section-238">41.5 在途请求与停用边界</a>
+<a class="level-3" href="#section-239">41.6 故障诊断和验收</a></nav></aside>
+<main class="document"><div class="document-bar"><span>可直接双击阅读 · 无脚本 / 无联网依赖</span><a href="./X-AI详细设计文档.md" download>下载 Markdown 源文档</a><a href="../README.md">项目使用说明</a><span>可用浏览器 Ctrl+P 打印</span></div><article class="paper"><h1 id="section-1">X-AI 1.2.7 详细设计文档<a class="anchor" href="#section-1" aria-label="链接到本节">#</a></h1>
 <blockquote>
 <p>产品：X-AI · 本地视频创作台<br>
-版本沿革：1.0 原设计；1.1 同名素材、自动关联、筛选与创作项目；1.1.1 单段互斥试听 / 试看；1.1.2 本地启动与连接恢复；1.1.3 原素材只引用与文件状态恢复；1.1.4 目录写入重试与批量映射保存；1.1.5 任务刷新与动态进度；1.1.6 紧凑进度与媒体下载恢复；1.2.0 小白版 / 专家版、PavoAI与动态平台能力；1.2.1 极简默认入口与提交冷却；1.2.2 自动排队与下载恢复；1.2.3 队列自检、后台校验与输入清空；1.2.4 下载检查点与模块版本一致性；1.2.5 操作独立间隔与渐进限流；1.2.6 Pages自动媒体通道。新增与变更详见第27—40章。<br>
+版本沿革：1.0 原设计；1.1 同名素材、自动关联、筛选与创作项目；1.1.1 单段互斥试听 / 试看；1.1.2 本地启动与连接恢复；1.1.3 原素材只引用与文件状态恢复；1.1.4 目录写入重试与批量映射保存；1.1.5 任务刷新与动态进度；1.1.6 紧凑进度与媒体下载恢复；1.2.0 小白版 / 专家版、PavoAI与动态平台能力；1.2.1 极简默认入口与提交冷却；1.2.2 自动排队与下载恢复；1.2.3 队列自检、后台校验与输入清空；1.2.4 下载检查点与模块版本一致性；1.2.5 操作独立间隔与渐进限流；1.2.6 Pages自动媒体通道；1.2.7 本机服务保活与密钥操作。新增与变更详见第27—41章。<br>
 文档基准日期：2026-10-03（北京时间）<br>
 代码目录：<code>D:\PRIVACY-REDACTED\REDACTED-DIR</code><br>
 面向读者：产品负责人、普通使用者、前端开发者、音视频开发者、测试人员及接手开发的 AI。<br>
@@ -3789,5 +3796,28 @@ node tools/build-design-doc.mjs</code></pre></div>
 <p><strong>隔离来源验证通过不等于公开Pages已经上线。</strong> 本轮修复先落代码、更新本机服务并验证，发布动作按仓库规则另行授权。公开页面仍显示1.2.5时仍会执行旧下载逻辑；正式发布后刷新载入1.2.6，沿用原任务恢复，不重新创建。</p>
 <h3 id="section-232">40.7 文件与维护交接<a class="anchor" href="#section-232" aria-label="链接到本节">#</a></h3>
 <p>新增 <code>src/media-relay.js</code>、<code>media-relay.json</code>、<code>tools/media_session.py</code>；修改Transport、下载恢复分类、状态显示、本机serve/local_media、运行版本和CSP；新增Pages实测、媒体会话安全与策略测试。发布时必须包含配置和Python新模块，漏发任一部分都不能认为已完成部署。入口模块图通过build-runtime统一锁到1.2.6，设计HTML从本Markdown重建。</p>
+<h2 id="section-233">41. 1.2.7 本机服务保活、S06恢复与密钥操作<a class="anchor" href="#section-233" aria-label="链接到本节">#</a></h2>
+<h3 id="section-234">41.1 本轮现场证据<a class="anchor" href="#section-234" aria-label="链接到本节">#</a></h3>
+<p>S06处于download，downloadFailures=82、downloadWaitingFor=download-channel，实际来源为<a href="https://wangxp7.github.io%EF%BC%8C1.2.6%E8%AF%8A%E6%96%AD%E6%98%BE%E7%A4%BArelay">https://wangxp7.github.io，1.2.6诊断显示relay</a> unavailable。监听检查确认4183没有服务；旧startup.json仍存在，不代表进程存活。日志显示S04/S05的媒体POST曾成功，此后无S06请求到达。该故障与目录“已授权”、生成密钥是否已启用不是同一权限。</p>
+<p>恢复本机服务后，原Pages页面在22:11:58自动握手并首轮取回S06；22:12:11项目显示ready、内容审核pending。实际文件为clips/EP01/S06_v1.mp4，2,583,582字节，12.256秒，720×1280，24fps，有音轨，完整解码passed。原video_id为task_6KbiGkmHPNrmbZ7UTwgls31Afd6yXnk5，尝试数1。未人工改写生产project.json或替换视频，也没有发起新生成。</p>
+<h3 id="section-235">41.2 Windows独立启动<a class="anchor" href="#section-235" aria-label="链接到本节">#</a></h3>
+<p>旧版只设置DETACHED_PROCESS等控制台标志，没有建立可靠的服务生命周期。实际执行环境存在KILL_ON_JOB_CLOSE进程Job；初步添加BREAKAWAY仍在外层Job中，隔离测试观察到killOnJobClose=true，因此不能作为最终修复。历史进程退出瞬间没有留存原因日志；已证实的直接原因是服务停止，生命周期缺陷可通过模拟启动器结束复现，不把未知退出时刻归因写成已证实。</p>
+<p>最终由process_lifetime.start_background调用Windows CIM Win32_Process.Create启动固定background.py角色。只允许server/watchdog，参数只包含代码路径和合法端口；路径先通过subprocess.list2cmdline编码，再通过JSON/Base64作为PowerShell数据传递，不把路径拼成可执行脚本。使用pythonw及隐藏窗口配置，后台进程不继承工具终端Job，不需要计划任务、管理员权限或远端服务。</p>
+<p>background.py统一将服务/守护输出写入.local日志；服务健康响应和守护检查点记录实际lifetime信息。WindowsProcess持有确切子进程句柄，用于启动失败时结束本次创建的进程，不根据一个陈旧PID终止其它程序。系统启动失败应明确报错，不静默回退到受清理的子进程并宣称后台成功。</p>
+<h3 id="section-236">41.3 本机守护规则<a class="anchor" href="#section-236" aria-label="链接到本节">#</a></h3>
+<p>守护由操作系统独立启动，与服务分开。supervisor.lock使用操作系统锁保证一个工作区只有一个守护；supervisor.json记录app、workspace、pid、原端口、心跳、状态、重启次数及服务PID，不存API密钥或用户项目内容。</p>
+<p>每30秒核对原端口的应用和工作区身份。健康则不重启；无响应且端口空闲才重启本工程服务；端口被其它程序占用时保留等待错误，不杀占用者，也不切换到网页配置不知道的新端口。服务恢复后的浏览器检测、下载检查点与原任务编号继续采用1.2.6逻辑，守护本身不读写生产任务、不发送生成/查询API。</p>
+<p>重复运行启动器复用已健康服务和守护。维护停止命令仅给本工作区写入守护停止标志，守护停止自身而保留服务；正常启动器可恢复保活。关机、注销或用户主动停止守护不属于运行期间的服务异常，重新登录后应正常启动本机程序。不能保证关机期间网页仍能下载。</p>
+<h3 id="section-237">41.4 密钥操作与任务编辑解耦<a class="anchor" href="#section-237" aria-label="链接到本节">#</a></h3>
+<p>CredentialsPanel.action旧版统一调用ensureIdle，下载恢复、轮询或后台校验都会让“使用新密钥”报“请先暂停新提交，并等待当前任务完成后再修改记录”。这不是密钥校验失败，而是把会话凭据操作误当成修改任务记录，可能形成需要密钥继续、又不允许启用密钥的循环。</p>
+<p>新默认密钥、自定义密钥、加密解锁、停用、备份管理及只读连接检查仍由面板busy串行保护，但不需要队列空闲。绑定事件继续遵守页面独占锁；错误密钥格式/错误解锁口令仍不替换当前密钥。密钥明文只留当前会话，持久化只保存加密副本。修改任务、目录、连接来源等其它既有操作的保护不因本轮一并删除。</p>
+<p>成功启用不同密钥后立即触发队列自检。已知video_id因查询401/403阻塞的任务保存pollCredentialRejected；新密钥只将这种任务恢复为queued并查询原编号，不恢复未知POST、不新建尝试、不重做已完成任务。错误口令导致的失败操作不触发密钥变更通知。</p>
+<h3 id="section-238">41.5 在途请求与停用边界<a class="anchor" href="#section-238" aria-label="链接到本节">#</a></h3>
+<p>Transport在调用开始时检查密钥，并在CD等待结束、写入发送检查点之前再次检查和固定当次密钥/配对凭据。之后即使用户更换密钥，这次请求使用原快照，后续请求使用新值，不产生混合请求头。</p>
+<p>等待期间密钥被停用时抛MissingCredential，发送回调尚未执行，没有发送POST；任务保持pending、尝试仍为1、没有submittedAt/sentAt，不能标unknown。队列缺少密钥时退出API调度循环，等待启用后的自检，避免200ms错误刷盘；已经开始的下载和本地校验继续进行。</p>
+<p>旧密钥在途GET返回401/403，但当前密钥已更换时，保留queued并在下一查询使用新密钥，不能拿旧响应阻塞新凭据。真正失败的当前凭据查询可等待新密钥恢复。创建POST的未知结果仍按原防重规则，不因更换密钥自动重发。</p>
+<h3 id="section-239">41.6 故障诊断和验收<a class="anchor" href="#section-239" aria-label="链接到本节">#</a></h3>
+<p>媒体诊断增加configuration/permission/session阶段、浏览器权限状态、HTTP状态及错误类型；从完整会话对象中按白名单摘取，不输出token、endpoint或密钥。session不可达对应local-service等待分类，显示“本机下载服务未连接 · 自动检测中”。仍不能仅靠fetch的TypeError区分全部系统网络故障，服务监听/日志才用于现场进一步确认。</p>
+<p>验收包含真实生产S06自动完成与磁盘SHA核对；Windows隔离工作区模拟终止启动器Job后服务仍在，再强制结束测试服务，守护在原端口重启；服务/守护均实查killOnJobClose=false；未知端口占用不启动替代端口；下载进行中的真实界面启用/更换/停用密钥，GET检查成功、原视频最终完整解码；CD内停用密钥零POST；已知任务认证失败恢复仍沿用原ID。所有模拟接口使用合成密钥，不为测试收费生成。实际结果和未执行项以验证记录为准。</p>
 <footer class="reader-footer">本文由同目录 Markdown 生成。以当前源码和用户最新要求核对；未实现功能与未执行检查不得冒充完成。® YiQiXP</footer></article></main>
 </body></html>
