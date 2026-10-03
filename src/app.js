@@ -166,7 +166,7 @@ async function init(){
   assetLibrary.reselectFiles=()=>pickAssets(false);
   batchPanel=new BatchPanel({context:()=>({project:{...project,assets:studioAssets(project)},folder}),bind:on,ensureIdle:ensureDraftReady,planImport,defaults:batchDefaults,showLibrary:()=>view('assets')});
   on('#library-return-studio','click',()=>view('studio'));
-  credentials=new CredentialsPanel({transport:runner.transport,bind:on,ensureIdle,onConnectionChange:updateConnection,event,save});
+  credentials=new CredentialsPanel({transport:runner.transport,bind:on,onConnectionChange:({credentialChanged=false}={})=>{updateConnection();if(credentialChanged&&runner.transport.key)runner.credentialsReady().then(()=>watchdog?.tick()).catch(e=>toast(friendlyError(e),true));},event,save});
   await credentials.initialize();
   for(const job of project.jobs){if(job.state==='submitting'){job.state=job.attempts.at(-1)?.videoId?'queued':'unknown';job.error='页面在提交时中断，请先核实服务端video_id。';}if(job.state==='checking')job.state='download';}
   const recoveredDownloads=recoverDownloads(project);if(recoveredDownloads)recordEvent(project,'download_recovery_enabled','1.2.2：已生成任务自动恢复原视频下载。');

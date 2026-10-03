@@ -14,6 +14,7 @@ from urllib.request import ProxyHandler, build_opener
 import webbrowser
 
 from local_runtime import APP_ID, ROOT, workspace_id
+from process_lifetime import start_background
 
 LOCAL = ROOT / '.local'
 STATE = LOCAL / 'startup.json'
@@ -100,19 +101,7 @@ def remember(port, identity):
 
 
 def start_server(port):
-    command = [sys.executable, str(ROOT / 'tools' / 'serve.py'), '--port', str(port)]
-    options = {'cwd': str(ROOT), 'stdin': subprocess.DEVNULL, 'close_fds': True}
-    if os.name == 'nt':
-        # Detached from both this launcher and its invoking terminal/tool session.
-        options['creationflags'] = (subprocess.DETACHED_PROCESS |
-                                    subprocess.CREATE_NEW_PROCESS_GROUP |
-                                    subprocess.CREATE_NO_WINDOW)
-    else:
-        options['start_new_session'] = True
-    with LOG.open('ab') as output:
-        output.write(f'\nStarting port {port} at {datetime.now(timezone.utc).isoformat()}\n'.encode())
-        output.flush()
-        process = subprocess.Popen(command, stdout=output, stderr=output, **options)
+    process = start_background(ROOT, 'server', port)
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         identity = health(port)
@@ -132,9 +121,9 @@ def start_server(port):
     raise RuntimeError(f'X-AI could not start on port {port}. Details: {LOG}')
 
 
-def ensure_server(requested=None):
+def ensure_server(requested=None, strict=False):
     with launch_lock():
-        ports = candidate_ports(requested, saved_port())
+        ports = [requested] if strict else candidate_ports(requested, saved_port())
         # Search all known ports before choosing a free one to avoid duplicates.
         for port in ports:
             identity = health(port)
@@ -146,15 +135,44 @@ def ensure_server(requested=None):
     raise RuntimeError('All X-AI candidate ports are busy. Retry with --port followed by a free port.')
 
 
+def ensure_supervisor(port):
+    from supervise import singleton
+    (LOCAL / 'supervisor.stop').unlink(missing_ok=True)
+    with singleton() as available:
+        if not available:
+            try:
+                value=json.loads((LOCAL / 'supervisor.json').read_text(encoding='utf-8'))
+                if value.get('app')==APP_ID and value.get('workspace')==workspace_id(ROOT) and value.get('port')==port and value.get('status') in ('healthy','waiting') and time.time()-value.get('checkedAt',0)<40:
+                    return value
+            except (OSError, ValueError):
+                pass
+    # The child holds an OS singleton lock; concurrent launchers cannot create
+    # competing restart loops. No PID-only termination of an existing process.
+    process=start_background(ROOT, 'watchdog', port)
+    deadline=time.monotonic()+12
+    while time.monotonic()<deadline:
+        try:
+            value=json.loads((LOCAL / 'supervisor.json').read_text(encoding='utf-8'))
+            if value.get('app')==APP_ID and value.get('workspace')==workspace_id(ROOT) and value.get('port')==port and value.get('status') in ('healthy','waiting') and time.time()-value.get('checkedAt',0)<40:
+                return value
+        except (OSError, ValueError):
+            pass
+        time.sleep(.2)
+    raise RuntimeError('Local service started, but watchdog startup was not confirmed. See .local/supervisor.log.')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, help='Preferred port; a running X-AI server is reused first.')
     parser.add_argument('--no-browser', action='store_true', help='Start/check without opening the browser.')
+    parser.add_argument('--no-watchdog', action='store_true', help='Start one service without its background watchdog (tests/manual maintenance).')
     args = parser.parse_args()
     if args.port is not None and not 1024 <= args.port <= 65535:
         parser.error('--port must be between 1024 and 65535')
     try:
         state, reused = ensure_server(args.port)
+        if not args.no_watchdog:
+            ensure_supervisor(state['port'])
         print(f"X-AI {'already running' if reused else 'started'}: {state['url']} (PID {state['pid']})", flush=True)
         if not args.no_browser:
             if not webbrowser.open(state['url']):

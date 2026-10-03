@@ -10,14 +10,15 @@ import {recoverDownloads,downloadDelay,shouldRefreshLink} from './download-recov
 import {downloadSaved,remoteBlocks,unresolvedSubmission} from './queue-health.js';
 import {savedDownload,rawDownloadPath,writeDownloadReceipt} from './download-checkpoint.js';
 import {APP_VERSION} from './runtime-version.js';
-import {AutomaticMediaRelay} from './media-relay.js';
+import {AutomaticMediaRelay,relayDiagnostic} from './media-relay.js';
 import {pacingKey,pacingConfig,pacingDue,pacingFeedback,platformPenalty,firstPollDelay} from './request-pacing.js';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 export class APIError extends Error{constructor(status,body,retryAfter){super(`接口返回${status}：${String(nested(body,['message','detail'])||'请求未成功').slice(0,140)}`);this.status=status;this.body=body;this.retryAfter=retryAfter;}}
+export class MissingCredential extends Error{constructor(){super('生成密钥未启用，启用后自动继续原任务。');this.name='MissingCredential';}}
 export class Transport {
   constructor(context,onActivity=()=>{}){this.context=context;this.onActivity=onActivity;this.key='';this.bridgeToken='';this.nextAt=0;this.lastResponseAt=null;this.mediaRelay=new AutomaticMediaRelay();}
   async api(route,payload,beforeSend,{notBefore=0}={}){
-    if(!this.key)throw Error('请先解锁 API 密钥。');const {project}=this.context();const settings=project.settings;
+    if(!this.key)throw new MissingCredential();const {project}=this.context();const settings=project.settings;
     if(!ORIGINS.includes(settings.origin)||!route.startsWith('/')||route.startsWith('//'))throw Error('接口地址不受信任。');
     const operation=payload?'submit':route.startsWith('/v1/models')?'models':'poll',model=payload?.model||new URL(route,settings.origin).searchParams.get('model_name');
     const profile=MODEL_PROFILES.find(p=>p.model===model)||modelProfile(),key=pacingKey(profile.platformId||profile.id,operation),config=pacingConfig(operation,settings,profile);
@@ -27,17 +28,21 @@ export class Transport {
       const sendFloor=payload?Math.max(0,...project.jobs.flatMap(j=>j.attempts.filter(a=>!a.request?.model||a.request.model===profile.model).map(a=>Date.parse(a.sentAt||a.submittedAt)||0))):0;
       const due=pacingDue(rate,config,{notBefore,submissionFloor:Math.max(cooldown?.until||0,sendFloor?sendFloor+config.base:0)});this.nextAt=due;
       if(Date.now()<due)this.onActivity({kind:'waiting',operation,label:rate.reason==='platform'?'平台限流，等待恢复':operation==='submit'?'等待生成提交间隔':'等待下次状态查询',waitUntil:due});while(Date.now()<due)await sleep(Math.min(1000,due-Date.now()));
-      const bridge=settings.connection==='bridge';if(bridge&&!this.bridgeToken)throw Error('请填写本机连接器配对码。');
+      // Snapshot credentials before the send checkpoint. A change while an
+      // existing request is in flight affects only later requests.
+      const credential=this.key,bridgeToken=this.bridgeToken;
+      if(!credential)throw new MissingCredential();
+      const bridge=settings.connection==='bridge';if(bridge&&!bridgeToken)throw Error('请填写本机连接器配对码。');
       if(beforeSend)await beforeSend();
       rate={...rate,version:2,lastSentAt:Date.now()};await put('state',key,rate);
       const url=bridge?'http://127.0.0.1:4174/api'+route:settings.origin+route;
-      const headers={'Authorization':'Bearer '+this.key,'Accept':'application/json'};
-      if(payload)headers['Content-Type']='application/json';if(bridge){headers['X-XAI-Token']=this.bridgeToken;headers['X-XAI-Origin']=settings.origin;}
+      const headers={'Authorization':'Bearer '+credential,'Accept':'application/json'};
+      if(payload)headers['Content-Type']='application/json';if(bridge){headers['X-XAI-Token']=bridgeToken;headers['X-XAI-Origin']=settings.origin;}
       this.onActivity({kind:'requesting',label:payload?'正在提交素材与任务':'正在查询服务端状态'});
       try{const response=await fetch(url,{method:payload?'POST':'GET',headers,body:payload?JSON.stringify(payload):undefined,credentials:'omit',redirect:'error',signal:AbortSignal.timeout(180000)});
         const raw=await response.text();let body;try{body=JSON.parse(raw);}catch{if(response.ok)throw Error('接口未返回JSON，保留当前任务，请检查连接。');body={message:'接口未返回JSON'};}
         this.lastResponseAt=Date.now();const retryAfter=response.headers.get('Retry-After');rate=pacingFeedback(rate,config,{status:response.status,body,retryAfter,ok:response.ok});await put('state',key,rate);this.nextAt=rate.notBefore;
-        if(!response.ok)throw new APIError(response.status,redact(body),retryAfter);return body;
+        if(!response.ok){const error=new APIError(response.status,redact(body),retryAfter);error.credentialChanged=credential!==this.key;throw error;}return body;
       }catch(error){if(error instanceof TypeError||['TimeoutError','AbortError'].includes(error?.name)){await put('state',key,pacingFeedback(rate,config,{network:true}));throw new ConnectionError(operation,bridge?'bridge':'direct',error);}throw error;}finally{this.onActivity({kind:'idle'});}
     });
   }
@@ -54,13 +59,13 @@ export class Transport {
     this.onActivity({kind:'download',label:'正在检查视频下载通道',bytes:0,total:0});
     let automatic=await this.mediaRelay.discover(url);
     const channels=[...(local?['local']:[]),...(automatic.state==='ready'?['automatic']:[]),...(bridge&&this.bridgeToken?['bridge']:[]),'direct'];let primaryError;
-    const diagnostic=this.mediaDiagnostic={version:APP_VERSION,pageOrigin:location.origin,localEligible:local,relay:{state:automatic.state},startedAt:now(),channels:[]};
+    const diagnostic=this.mediaDiagnostic={version:APP_VERSION,pageOrigin:location.origin,localEligible:local,relay:relayDiagnostic(automatic),startedAt:now(),channels:[]};
     for(let round=0;round<3;round++){
       for(const channel of channels){
         let reader;const started=Date.now();
         try{
           if(channel==='automatic'){
-            automatic=await this.mediaRelay.discover(url);diagnostic.relay={state:automatic.state};
+            automatic=await this.mediaRelay.discover(url);diagnostic.relay=relayDiagnostic(automatic);
             if(automatic.state!=='ready')throw new ConnectionError('media',channel,new TypeError('Media relay unavailable'));
           }
           const label=(['local','automatic'].includes(channel)?'正在通过本机取回原视频':channel==='bridge'?'正在通过已连接通道取回原视频':'正在直接下载原视频')+(round?` · 第 ${round+1} 次`:'');
@@ -98,7 +103,7 @@ export class Transport {
       // unreadable request three times. Probe again with the 30-second self-check.
       if(location.protocol==='https:'&&diagnostic.channels.filter(x=>x.round===round+1).every(x=>x.code==='fetch_unreadable')){
         const failure=new ConnectionError('media','automatic',{name:'MediaChannelUnavailable'});
-        failure.waitingFor=automatic.state==='permission-denied'?'browser-permission':'download-channel';failure.retryAt=Date.now()+30000;failure.diagnostic=diagnostic;throw failure;
+        failure.waitingFor=automatic.state==='permission-denied'?'browser-permission':automatic.reason==='session_unreachable'?'local-service':'download-channel';failure.retryAt=Date.now()+30000;failure.diagnostic=diagnostic;throw failure;
       }
       if(round<2)await sleep(1000*2**(round+1));
     }
@@ -126,6 +131,16 @@ export class Runner {
   event(kind,msg,id){recordEvent(this.context().project,kind,msg,id);}
   async setPaused(paused){
     const p=this.context().project;p.queueControl={...p.queueControl,paused,updatedAt:now()};this.pauseNew=paused;await this.persist();
+  }
+  async credentialsReady(){
+    if(!this.transport.key)return;
+    let changed=false;
+    for(const job of this.context().project.jobs){const a=job.attempts.at(-1);
+      if(job.state==='blocked'&&a?.pollCredentialRejected&&a.videoId&&!a.url&&!a.resolved&&!a.terminalConfirmed){
+        delete a.pollCredentialRejected;job.state='queued';job.error=null;changed=true;
+      }
+    }
+    if(changed){this.event('credentials_resumed','密钥已启用，继续查询原任务编号');await this.persist();}
   }
   setLocalActivity(job,value){this.localActivity={...value,uid:job.uid,updatedAt:Date.now()};this.onActivity();}
   launchLocalCheck(job,file){
@@ -165,6 +180,7 @@ export class Runner {
         if(job&&['pending','submitting','unknown'].includes(job.state)&&job.attempts.at(-1)?.videoId){job.state='queued';await this.persist(true);}
         if(!job&&!this.pauseNew&&this.transport.key)job=p.jobs.find(j=>j.state==='pending'&&(this.runAll||j.autoSubmit||this.allowedUids.has(j.uid))&&(!j.continuityFrom||p.jobs.some(prev=>prev.id===j.continuityFrom&&['ready','approved'].includes(prev.state)&&prev.current?.lastFrameKey)));
         if(!job){if(this.localChecks.size){await Promise.race(this.localChecks.values());continue;}break;}
+        if(!this.transport.key&&['pending','deferred','queued','generating'].includes(job.state))break;
         if(this.pauseNew&&job.state==='deferred')break;
         if(job.state==='blocked')throw Error(job.error||'当前任务恢复条件尚未满足。');
         this.activeUid=job.uid;await this.step(job);this.activeUid=null;this.setActivity({kind:'idle'});await sleep(200);
@@ -198,14 +214,17 @@ export class Runner {
       try{const response=await this.transport.api('/v1/videos',payload,async()=>{if(this.pauseNew){const e=Error('已暂停新提交');e.name='QueuePaused';throw e;}job.state='submitting';delete attempt.rejectedBeforeCreation;attempt.submittedAt=now();this.event('submitting','即将发送请求，已保存提交检查点',job.id);await this.persist(true);attempt.sentAt=now();this.onChange();});attempt.response=redact(response);attempt.videoId=nested(response,['video_id']);if(typeof attempt.videoId!=='string'||!attempt.videoId){delete attempt.videoId;job.state='unknown';job.error='接口没有返回video_id。请核实服务端任务，不要重新提交。';this.event('submission_unknown',job.error,job.id);await this.persist(true);return;}
         attempt.submittedAt=attempt.submittedAt||now();attempt.sentAt=attempt.sentAt||attempt.submittedAt;attempt.acceptedAt=now();const cooldown=submissionCooldown(this.context().project,job.profileId);if(cooldown.seconds){try{const stored=await get('state','submission-cooldowns')||{};stored[cooldown.key]=Math.max(Number(stored[cooldown.key])||0,Date.parse(attempt.acceptedAt));await put('state','submission-cooldowns',stored);}catch{this.message('提交已成功；浏览器冷却记录暂未保存，当前任务记录仍保留冷却时间。',true);}this.message(cooldownMessage(cooldown));}
         attempt.taskId=nested(response,['task_id','id']);attempt.firstPollAt=Date.now()+firstPollDelay(this.context().project,job.profileId);job.state='queued';this.event('accepted','video_id='+attempt.videoId,job.id);await this.persist(true);return;
-      }catch(e){if(e.name==='QueuePaused'){job.state='pending';job.error=null;await this.persist();return;}attempt.lastProblem=networkRecord(e);attempt.submitError=redact(e.body||friendlyError(e));
+      }catch(e){if(e.name==='QueuePaused'||e.name==='MissingCredential'){job.state='pending';job.error=e.name==='MissingCredential'?e.message:null;await this.persist();return;}attempt.lastProblem=networkRecord(e);attempt.submitError=redact(e.body||friendlyError(e));
         if(e instanceof APIError){const type=classifyHTTP(e.status,e.body,true);if(type==='deferred'){attempt.rejectedBeforeCreation=true;job.state='deferred';job.error='服务端明确拒绝本次创建，按限流反馈逐步调整间隔后重试。';attempt.deferrals=(attempt.deferrals||0)+1;}else if(type==='rejected'){job.state='failed';attempt.resolved=true;attempt.rejectedBeforeCreation=true;job.error=friendlyError(e);if([401,403].includes(e.status)){this.pauseNew=true;this.context().project.queueControl={paused:true,updatedAt:now()};}}else{job.state='unknown';job.error='提交结果不明。请保留请求记录并核实video_id，禁止直接重发。';}}
         else{job.state='unknown';job.error=friendlyError(e)+' 提交可能已被接受，请先核实。';}this.event(job.state,job.error,job.id);await this.persist(true);return;
       }
     }
     if(['queued','generating'].includes(job.state)){
       if(!attempt?.videoId){job.state='unknown';job.error='缺少video_id，请核实创建结果。';await this.persist();return;}
-      let response;try{response=await this.transport.api('/agnesapi?'+new URLSearchParams({video_id:attempt.videoId,model_name:attempt.request?.model||modelProfile(job.profileId).model}),undefined,undefined,{notBefore:attempt.polledAt?Date.parse(attempt.polledAt)+10000:attempt.firstPollAt||0});}catch(e){attempt.lastProblem=networkRecord(e);job.error=friendlyError(e);attempt.pollErrors=(attempt.pollErrors||0)+1;this.event('poll_error',job.error,job.id);if(e instanceof APIError&&[400,401,403,404].includes(e.status)&&!platformPenalty(e.status,e.body,e.retryAfter))job.state='blocked';await this.persist();return;}
+      let response;try{response=await this.transport.api('/agnesapi?'+new URLSearchParams({video_id:attempt.videoId,model_name:attempt.request?.model||modelProfile(job.profileId).model}),undefined,undefined,{notBefore:attempt.polledAt?Date.parse(attempt.polledAt)+10000:attempt.firstPollAt||0});}catch(e){attempt.lastProblem=networkRecord(e);job.error=friendlyError(e);attempt.pollErrors=(attempt.pollErrors||0)+1;this.event('poll_error',job.error,job.id);if(e instanceof APIError&&[400,401,403,404].includes(e.status)&&!platformPenalty(e.status,e.body,e.retryAfter)){
+          if([401,403].includes(e.status)&&e.credentialChanged&&this.transport.key){job.error=null;}
+          else{job.state='blocked';attempt.pollCredentialRejected=[401,403].includes(e.status);}
+        }await this.persist();return;}
       attempt.pollResponse=redact(response);attempt.polledAt=now();attempt.pollErrors=0;const status=String(nested(response,['status'])||'unknown').toLowerCase();const progress=reportedProgress(nested(response,['progress']));job.progressKnown=progress!==null;job.progress=progress??0;job.error=null;
       if(['failed','error','cancelled','canceled'].includes(status)){job.state='failed';attempt.resolved=true;attempt.terminalConfirmed=true;job.error=String(nested(response,['message'])||nested(response,['code'])||'服务端已确认生成失败，打开详情查看原因。');this.event('remote_failed',job.error,job.id);}
       else if(['completed','success','succeeded'].includes(status)){attempt.remoteCompletedAt=attempt.remoteCompletedAt||now();attempt.url=nested(response,['url','video_url']);job.state=attempt.url?'download':'queued';if(!attempt.url){job.error=null;this.event('result_wait','服务端已完成，自动等待下载链接返回',job.id);}}
@@ -216,7 +235,7 @@ export class Runner {
       const {folder}=this.context();let reading=true;
       let file=await savedDownload(folder,job);
       // A verified local original takes priority over a stale network backoff.
-      if(!file&&attempt.downloadRetryAt){this.setActivity({kind:'recovery',label:attempt.downloadWaitingFor==='browser-permission'?'等待浏览器允许本机访问':attempt.downloadWaitingFor?'等待下载通道恢复 · 自动检测中':`下载恢复 · 已尝试 ${attempt.downloadFailures||0} 轮`,waitUntil:attempt.downloadRetryAt});let checkedAt=Date.now();while(Date.now()<attempt.downloadRetryAt){await sleep(Math.min(1000,attempt.downloadRetryAt-Date.now()));if(Date.now()-checkedAt>=30000){file=await savedDownload(folder,job);checkedAt=Date.now();if(file)break;}}}
+      if(!file&&attempt.downloadRetryAt){this.setActivity({kind:'recovery',label:attempt.downloadWaitingFor==='browser-permission'?'等待浏览器允许本机访问':attempt.downloadWaitingFor==='local-service'?'本机下载服务未连接 · 自动检测中':attempt.downloadWaitingFor?'等待下载通道恢复 · 自动检测中':`下载恢复 · 已尝试 ${attempt.downloadFailures||0} 轮`,waitUntil:attempt.downloadRetryAt});let checkedAt=Date.now();while(Date.now()<attempt.downloadRetryAt){await sleep(Math.min(1000,attempt.downloadRetryAt-Date.now()));if(Date.now()-checkedAt>=30000){file=await savedDownload(folder,job);checkedAt=Date.now();if(file)break;}}}
       // Offline recovery wakes immediately on 'online', rather than losing the job.
       while(!file&&navigator.onLine===false){this.setActivity({kind:'recovery',label:'网络恢复后自动继续下载'});await new Promise(resolve=>{const finish=()=>{clearTimeout(timer);window.removeEventListener('online',finish);resolve();};const timer=setTimeout(finish,30000);window.addEventListener('online',finish,{once:true});});file=await savedDownload(folder,job);}
       try{

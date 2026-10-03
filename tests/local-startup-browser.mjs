@@ -39,7 +39,7 @@ try{
     sections:document.querySelectorAll('h3').length,scripts:document.scripts.length,
     missing:[...document.querySelectorAll('a[href^="#"]')].filter(a=>!document.getElementById(a.hash.slice(1))).length,
     overflow:document.documentElement.scrollWidth>innerWidth}));
-  assert.ok(reading.title.includes(version));assert.equal(reading.chapters,41);
+  assert.ok(reading.title.includes(version));assert.equal(reading.chapters,42);
   assert.equal(reading.missing,0);assert.equal(reading.scripts,0);assert.equal(reading.overflow,false);
   await doc.locator('.reader-nav a.level-2').last().click();
   await doc.locator('h2').last().evaluate(element=>element.scrollIntoView({behavior:'instant',block:'start'}));
@@ -51,6 +51,6 @@ try{
   const result={at:new Date().toISOString(),version,url:base,serverPid:identity.pid,
     app:{ready:true,desktopOverflow:false,mobileOverflow:false,errors,externalRequests:unexpected},
     document:{...reading,mobileOverflow:false,errors:docErrors,externalRequests:docRequests}};
-  await writeFile('test-results/startup-v126-results.json',JSON.stringify(result,null,2));
+  await writeFile('test-results/startup-v127-results.json',JSON.stringify(result,null,2));
   console.log(JSON.stringify(result,null,2));
 }finally{await browser.close();}
