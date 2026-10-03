@@ -297,3 +297,15 @@ body:has(dialog[open])>#toast-region{display:none}
 
 /* 1.2.0 sidebar: consistent spacing and selected provider, no awkward orphan lines. */
 .local-card{padding:15px 13px;border:1px solid #e8ede8;border-radius:13px;background:linear-gradient(145deg,#f6f8f5,#f3f5f1)}.local-card-title{display:flex;align-items:center;gap:10px}.local-card-icon{display:grid;place-items:center;flex-shrink:0;width:28px;height:28px;border-radius:8px;background:#e9efe8;color:#6b8972;font-size:20px}.local-card-title strong{display:grid;gap:2px;line-height:1.6;font-size:14px;font-weight:600;color:#3f5348}.local-card-title strong span{display:block;white-space:nowrap}.local-card-copy{margin-top:12px;padding-top:11px;border-top:1px solid #e1e7e0}.local-card-copy p{margin:0;font-size:13px;line-height:1.8;color:#778179;overflow-wrap:anywhere}.local-card-copy p strong{color:#566c5b;font-weight:500}.local-card-copy p.local-card-result{margin-top:8px;font-size:12px;color:#8a958d}.local-card-result::before{content:'↓';margin-right:5px;color:#92a699}@media(max-width:900px){.local-card{display:none}}
+
+/* 1.2.1: centered experience controls and a minimal novice workspace. */
+.topbar{display:grid;grid-template-columns:minmax(180px,1fr) auto minmax(180px,1fr);gap:16px;height:auto;min-height:62px;padding-top:7px;padding-bottom:7px}
+.topbar .breadcrumb{min-width:0}.topbar-right{justify-self:end;white-space:nowrap}
+.topbar .experience-bar{justify-self:center;justify-content:center;align-items:center;flex-direction:row;gap:12px;margin:0;min-width:0}
+.topbar .experience-switch{padding:3px;border-radius:10px}.topbar .experience-switch button{font-size:14px;padding:7px 14px;min-height:36px;border-radius:7px}
+.topbar .experience-bar p{font-size:13px;line-height:1.5;max-width:345px}
+body[data-experience=easy] #studio-view .studio-project-bar,body[data-experience=easy] #studio-view .directory-bar,body[data-experience=easy] #directory-details{display:none}
+@media(max-width:1300px){.topbar{grid-template-columns:minmax(160px,1fr) auto minmax(160px,1fr);gap:12px}.topbar .experience-bar{flex-direction:column;gap:3px;max-width:345px}.topbar .experience-bar p{text-align:center}.topbar-right{gap:10px}}
+@media(max-width:760px){.topbar{grid-template-columns:minmax(0,1fr) auto;gap:6px 12px}.topbar .experience-bar{grid-column:1/-1;grid-row:2;width:100%;max-width:none}.topbar .breadcrumb{grid-column:1;grid-row:1}.topbar-right{grid-column:2;grid-row:1}.topbar .experience-bar p{max-width:100%}.topbar .experience-switch button{padding:6px 16px}}
+
+.submission-cooldown{margin:12px 0 0;padding:10px 13px;background:#f5f7f3;border:1px solid #dce7d8;border-radius:9px;color:#57704e;font-size:14px;line-height:1.7}

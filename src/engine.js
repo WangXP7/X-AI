@@ -1,6 +1,7 @@
 import {ORIGINS,DIMENSIONS,now,uid,sha256,redact,nested,classifyHTTP,friendlyError,validateJob,requestPrompt,recordEvent} from './core.js';
 import {promptSpec} from './prompt-spec.js';
-import {modelProfile} from './models.js';
+import {MODEL_PROFILES,modelProfile} from './models.js';
+import {submissionCooldown,cooldownMessage} from './submission-policy.js';
 import {get,put,blob,storeBlob,saveProject,writeFile,permitted,reportMarkdown,readAsset} from './storage.js';
 import {dataURL,inspectVideo,concatenate,videoMetadata,deepCheck} from './media.js';
 import {reportedProgress} from './queue-progress.js';
@@ -14,7 +15,8 @@ export class Transport {
     if(!ORIGINS.includes(settings.origin)||!route.startsWith('/')||route.startsWith('//'))throw Error('接口地址不受信任。');
     return navigator.locks.request('x-ai-auth-http',async()=>{
       const rate=await get('state','rate')||{last:0,notBefore:0};const gap=Math.max(90,Number(settings.gap)||90)*1000;
-      this.nextAt=Math.max(rate.last+gap,rate.notBefore||0);if(Date.now()<this.nextAt)this.onActivity({kind:'waiting',label:'等待请求间隔',waitUntil:this.nextAt});while(Date.now()<this.nextAt)await sleep(Math.min(1000,this.nextAt-Date.now()));
+      const profile=payload&&MODEL_PROFILES.find(p=>p.model===payload.model);const cooldown=profile?submissionCooldown(project,profile.id,await get('state','submission-cooldowns')||{}):null;
+      this.nextAt=Math.max(rate.last+gap,rate.notBefore||0,cooldown?.until||0);if(Date.now()<this.nextAt)this.onActivity({kind:'waiting',label:cooldown?.remaining?'等待平台提交冷却与请求间隔':'等待请求间隔',waitUntil:this.nextAt});while(Date.now()<this.nextAt)await sleep(Math.min(1000,this.nextAt-Date.now()));
       // Persist the slot BEFORE sending any authenticated request. Failed calls count too.
       await put('state','rate',{...rate,last:Date.now()});this.nextAt=Date.now()+gap;
       const bridge=settings.connection==='bridge';if(bridge&&!this.bridgeToken)throw Error('请填写本机连接器配对码。');
@@ -101,6 +103,7 @@ export class Runner {
       if(!attempt||attempt.resolved){attempt={number:job.attempts.length+1,createdAt:now(),reason:job.revisionReason||'首次生成',snapshot:JSON.parse(JSON.stringify({prompt:job.prompt,dialogue:job.dialogue,mode:job.mode,seconds:job.seconds,aspect:job.aspect,assetIds:job.assetIds,firstFrame:job.firstFrame,lastFrame:job.lastFrame,continuityFrom:job.continuityFrom,textSources:job.textSources||[],referenceReplacements:job.referenceReplacements||[]})),request:redact(payload),requestHash:await sha256(JSON.stringify(payload)),inputHashes:[...new Set([...job.assetIds,job.firstFrame,job.lastFrame].filter(Boolean))].map(id=>({id,sha256:this.context().project.assets.find(a=>a.id===id)?.sha256}))};if(job.continuityFrom){const prev=this.context().project.jobs.find(j=>j.id===job.continuityFrom);attempt.continuityInput={shot:prev.id,path:prev.current.lastFramePath,sha256:prev.current.lastFrameSha256,clipSha256:prev.current.sha256};}job.attempts.push(attempt);}
       job.state='submitting';job.error=null;attempt.submittedAt=now();this.event('submitting','已写入提交前检查点',job.id);await this.persist(true);
       try{const response=await this.transport.api('/v1/videos',payload);attempt.response=redact(response);attempt.videoId=nested(response,['video_id']);if(typeof attempt.videoId!=='string'||!attempt.videoId){delete attempt.videoId;job.state='unknown';job.error='接口没有返回video_id。请核实服务端任务，不要重新提交。';this.event('submission_unknown',job.error,job.id);await this.persist(true);return;}
+        attempt.acceptedAt=now();const cooldown=submissionCooldown(this.context().project,job.profileId);if(cooldown.seconds){try{const stored=await get('state','submission-cooldowns')||{};stored[cooldown.key]=Math.max(Number(stored[cooldown.key])||0,Date.parse(attempt.acceptedAt));await put('state','submission-cooldowns',stored);}catch{this.message('提交已成功；浏览器冷却记录暂未保存，当前任务记录仍保留冷却时间。',true);}this.message(cooldownMessage(cooldown));}
         attempt.taskId=nested(response,['task_id','id']);job.state='queued';this.event('accepted','video_id='+attempt.videoId,job.id);await this.persist(true);return;
       }catch(e){attempt.lastProblem=networkRecord(e);attempt.submitError=redact(e.body||friendlyError(e));
         if(e instanceof APIError){const type=classifyHTTP(e.status,e.body,true);if(type==='deferred'){job.state='deferred';job.error='服务端明确拒绝本次创建，等待更长间隔后再提交。';attempt.deferrals=(attempt.deferrals||0)+1;await this.transport.backoff(attempt.deferrals);}else if(type==='rejected'){job.state='failed';attempt.resolved=true;attempt.rejectedBeforeCreation=true;job.error=friendlyError(e);if([401,403].includes(e.status))this.pauseNew=true;}else{job.state='unknown';job.error='提交结果不明。请保留请求记录并核实video_id，禁止直接重发。';}}

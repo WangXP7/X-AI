@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="X-AI 1.2.0详细设计：产品、界面、架构、数据、文件、递归引用、队列、校验、恢复、部署与开发交接。">
+<meta name="description" content="X-AI 1.2.1详细设计：产品、界面、架构、数据、文件、递归引用、队列、校验、恢复、部署与开发交接。">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
-<title>X-AI 1.2.0 · 详细设计文档</title>
+<title>X-AI 1.2.1 · 详细设计文档</title>
 <style>
 *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;color:#262c3c;background:#f5f4f8;font:16px/1.85 'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif}.paper p,.paper li{overflow-wrap:anywhere}
 a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{position:fixed;inset:0 auto 0 0;width:310px;overflow:auto;padding:28px 23px;background:#f9f7fd;border-right:1px solid #e0d9ef}.reader-brand{font-size:25px;font-weight:800;letter-spacing:1px;color:#2c2546}.reader-brand small{font-size:15px;font-weight:500;display:block;letter-spacing:0;color:#746686;margin-top:4px}.reader-meta{margin:16px 0 20px;font-size:14px;line-height:1.75;color:#6b607a}.reader-nav nav{display:grid;gap:5px}.reader-nav nav a{display:block;text-decoration:none;font-size:14px;line-height:1.6;padding:6px 8px;border-radius:6px}.reader-nav nav a:hover{background:#eae3f7}.reader-nav .level-2{font-weight:650;border-top:1px solid #ebe5f2;padding-top:12px;margin-top:4px}.reader-nav .level-3{padding-left:20px;color:#6b607a}
@@ -15,7 +15,7 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 @media print{body{background:white;font-size:11pt;color:#111}.reader-nav,.document-bar,.anchor{display:none}.document{margin:0;padding:0;max-width:none}.paper{border:0;padding:0;max-width:none;box-shadow:none}h1{font-size:24pt}h2{break-before:auto;font-size:17pt}h3{font-size:13pt}h1,h2,h3{break-after:avoid}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f2f2;color:#222}pre code{white-space:pre-wrap;color:#222}.table-scroll{overflow:visible;border:0}table{min-width:0;font-size:9pt}tr{break-inside:avoid}.diagram{break-inside:avoid}details{display:none}a{color:inherit}}
 </style></head><body>
-<aside class="reader-nav"><div class="reader-brand">X-AI <small>详细设计文档 · 1.2.0</small></div><p class="reader-meta">基准：2026-10-03 · 北京时间<br>实现、验证与扩展分别说明<br>正文约 76,471 字符 · 35 章</p><nav aria-label="文档目录"><a class="level-2" href="#section-2">0. 阅读方式、状态标记与依据</a>
+<aside class="reader-nav"><div class="reader-brand">X-AI <small>详细设计文档 · 1.2.1</small></div><p class="reader-meta">基准：2026-10-03 · 北京时间<br>实现、验证与扩展分别说明<br>正文约 79,527 字符 · 36 章</p><nav aria-label="文档目录"><a class="level-2" href="#section-2">0. 阅读方式、状态标记与依据</a>
 <a class="level-3" href="#section-3">0.1 阅读路径</a>
 <a class="level-3" href="#section-4">0.2 文档用语</a>
 <a class="level-3" href="#section-5">0.3 依据与冲突处理</a>
@@ -198,17 +198,23 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 <a class="level-3" href="#section-182">34.6 平台、API、模型与模式能力注册</a>
 <a class="level-3" href="#section-183">34.7 侧栏说明卡片排版与平台文案</a>
 <a class="level-3" href="#section-184">34.8 返回原片、拼接与历史恢复</a>
-<a class="level-3" href="#section-185">34.9 验收与后续开发入口</a></nav></aside>
-<main class="document"><div class="document-bar"><span>可直接双击阅读 · 无脚本 / 无联网依赖</span><a href="./X-AI详细设计文档.md" download>下载 Markdown 源文档</a><a href="../README.md">项目使用说明</a><span>可用浏览器 Ctrl+P 打印</span></div><article class="paper"><h1 id="section-1">X-AI 1.2.0 详细设计文档<a class="anchor" href="#section-1" aria-label="链接到本节">#</a></h1>
+<a class="level-3" href="#section-185">34.9 验收与后续开发入口</a>
+<a class="level-2" href="#section-186">35. 1.2.1 顶栏版本切换、极简工作台与Pavo提交交互（2026-10-03）</a>
+<a class="level-3" href="#section-187">35.1 本轮范围与界面结构</a>
+<a class="level-3" href="#section-188">35.2 模式选择、草稿与目录授权</a>
+<a class="level-3" href="#section-189">35.3 Pavo默认参数与设置收起</a>
+<a class="level-3" href="#section-190">35.4 成功提交后的60秒冷却与数据规则</a>
+<a class="level-3" href="#section-191">35.5 实现入口与验收要求</a></nav></aside>
+<main class="document"><div class="document-bar"><span>可直接双击阅读 · 无脚本 / 无联网依赖</span><a href="./X-AI详细设计文档.md" download>下载 Markdown 源文档</a><a href="../README.md">项目使用说明</a><span>可用浏览器 Ctrl+P 打印</span></div><article class="paper"><h1 id="section-1">X-AI 1.2.1 详细设计文档<a class="anchor" href="#section-1" aria-label="链接到本节">#</a></h1>
 <blockquote>
 <p>产品：X-AI · 本地视频创作台<br>
-版本沿革：1.0 原设计；1.1 同名素材、自动关联、筛选与创作项目；1.1.1 单段互斥试听 / 试看；1.1.2 本地启动与连接恢复；1.1.3 原素材只引用与文件状态恢复；1.1.4 目录写入重试与批量映射保存；1.1.5 任务刷新与动态进度；1.1.6 紧凑进度与媒体下载恢复；1.2.0 小白版 / 专家版、PavoAI与动态平台能力。新增与变更详见第 27—34 章。<br>
+版本沿革：1.0 原设计；1.1 同名素材、自动关联、筛选与创作项目；1.1.1 单段互斥试听 / 试看；1.1.2 本地启动与连接恢复；1.1.3 原素材只引用与文件状态恢复；1.1.4 目录写入重试与批量映射保存；1.1.5 任务刷新与动态进度；1.1.6 紧凑进度与媒体下载恢复；1.2.0 小白版 / 专家版、PavoAI与动态平台能力；1.2.1 顶栏版本切换、极简默认入口、Pavo默认参数与成功提交冷却。新增与变更详见第 27—35 章。<br>
 文档基准日期：2026-10-03（北京时间）<br>
 代码目录：<code>D:\PRIVACY-REDACTED\REDACTED-DIR</code><br>
 面向读者：产品负责人、普通使用者、前端开发者、音视频开发者、测试人员及接手开发的 AI。<br>
 文档性质：当前实现说明 + 设计约束 + 扩展方案。不是服务商永久规格承诺，也不是历史视频生产已全部完成的证明。</p>
 </blockquote>
-<p>当前文档正文按 <strong>1.2.0</strong> 实际实现维护。第 27 章单独记录 <strong>1.1</strong> 新增与变更，第 28 章记录 <strong>1.1.1</strong> 播放补充，第 29 章记录 <strong>1.1.2</strong> 启动修复，第 30 章记录 <strong>1.1.3</strong> 素材导入修复，第 31 章记录 <strong>1.1.4</strong> 目录写入修复，第 32 章记录 <strong>1.1.5</strong> 队列刷新与进度，第 33 章记录 <strong>1.1.6</strong> 紧凑布局与下载故障恢复，第34章记录 <strong>1.2.0</strong> 简化操作与平台能力；历史验证保留原日期和版本，不能当成新功能的验证结果。</p>
+<p>当前文档正文按 <strong>1.2.1</strong> 实际实现维护。第 27 章单独记录 <strong>1.1</strong> 新增与变更，第 28 章记录 <strong>1.1.1</strong> 播放补充，第 29 章记录 <strong>1.1.2</strong> 启动修复，第 30 章记录 <strong>1.1.3</strong> 素材导入修复，第 31 章记录 <strong>1.1.4</strong> 目录写入修复，第 32 章记录 <strong>1.1.5</strong> 队列刷新与进度，第 33 章记录 <strong>1.1.6</strong> 紧凑布局与下载故障恢复，第34章记录 <strong>1.2.0</strong> 简化操作与平台能力，第35章记录 <strong>1.2.1</strong> 极简工作台与提交交互；历史验证保留原日期和版本，不能当成新功能的验证结果。</p>
 <h2 id="section-2">0. 阅读方式、状态标记与依据<a class="anchor" href="#section-2" aria-label="链接到本节">#</a></h2>
 <h3 id="section-3">0.1 阅读路径<a class="anchor" href="#section-3" aria-label="链接到本节">#</a></h3>
 <div class="table-scroll"><table>
@@ -387,7 +393,7 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 </tr>
 <tr>
 <td>品牌署名</td>
-<td>X-AI 1.2.0 与 ® YiQiXP 同一行，下一行统一字体标语</td>
+<td>X-AI 1.2.1 与 ® YiQiXP 同一行，下一行统一字体标语</td>
 <td>不恢复此前被否定的多行版权日期块</td>
 </tr>
 </tbody></table>
@@ -433,13 +439,13 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 <p>页面关闭 / 电脑休眠会暂停本地执行。已经提交的云端生成可能继续。恢复必须优先保留其编号和证据；不能为获得“干净状态”而删除最后一次尝试。</p>
 <h2 id="section-15">4. 页面结构与视觉规范<a class="anchor" href="#section-15" aria-label="链接到本节">#</a></h2>
 <h3 id="section-16">4.1 信息架构<a class="anchor" href="#section-16" aria-label="链接到本节">#</a></h3>
-<p>固定侧栏提供四个入口：创作工作台、任务与成片、本地素材库、操作指南。底部是本地说明卡、连接与密钥、版本署名和标语。主区域顶栏提供当前位置、密钥载入状态、帮助。创作区顶部直接显示本地文件夹和项目数量概况。</p>
+<p>固定侧栏提供四个入口：创作工作台、任务与成片、本地素材库、操作指南。底部是本地说明卡、连接与密钥、版本署名和标语。主区域顶栏提供当前位置、居中的“小白版 / 专家版”切换与解释、密钥载入状态和帮助。默认小白版直接显示PavoAI创作区，隐藏创作项目栏、文件夹 / 统计栏和保存位置详情。专家版显示这些管理信息。选择保存目录的权限仍在首次生成时申请，详见第35章。</p>
 <p>工作台无大型装饰 Hero，内容宽度不再限制在旧的 1530px 上限，以保留有效操作面积。任务总数、已生成数、素材数均来自实际项目数据，不是示例数字。</p>
 <h3 id="section-17">4.2 品牌<a class="anchor" href="#section-17" aria-label="链接到本节">#</a></h3>
 <ul>
 <li>Logo：<code>assets/logo.svg</code>，64×64 viewBox；深色圆角底、两条交叉 X 形带、紫色渐变、中央播放三角的组合。</li>
 <li>标准名称：X-AI；辅标 VIDEO STUDIO。</li>
-<li>左下版本：<code>X-AI 1.2.0　® YiQiXP</code>，同一行。</li>
+<li>左下版本：<code>X-AI 1.2.1　® YiQiXP</code>，同一行。</li>
 <li>最底标语：<code>让X-AI和你创造属于你的故事</code>；继承整体字体，14px、常规字形、两行完整短句“让X-AI和你创造”“属于你的故事”，不留单字孤行。</li>
 <li>标语卡：明确两行“你的文件，” / “你的电脑”；两行同左边缘。</li>
 <li>操作指南：描边书本 SVG；圆圈符号已替换，避免误认为单选选中状态。</li>
@@ -484,7 +490,7 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 <p>采用原生 <code>&lt;dialog&gt;</code> / <code>showModal()</code>。弹窗在浏览器 top layer，普通页面 toast 即使提高 z-index 也可能被遮罩挡住。设置窗口的错误固定进入弹窗底部反馈区，相关字段可标红 / 聚焦；其他弹窗把通知插入自己内部。任意 modal 打开时隐藏背景 toast 容器。</p>
 <h2 id="section-21">5. 创作工作台详细交互<a class="anchor" href="#section-21" aria-label="链接到本节">#</a></h2>
 <h3 id="section-22">5.1 单段操作区<a class="anchor" href="#section-22" aria-label="链接到本节">#</a></h3>
-<p>下表为专家版完整字段；默认小白版隐藏非必要参数并自动完成处理。PavoAI另有独立简洁操作区，详见第34章。</p>
+<p>下表为专家版完整字段；默认小白版直接进入PavoAI并隐藏非必要管理区，自动完成处理。单段、批量和PavoAI保留独立操作区，详见第34—35章。</p>
 <div class="table-scroll"><table>
 <thead>
 <tr>
@@ -3190,5 +3196,64 @@ node tools/build-design-doc.mjs</code></pre></div>
 <h3 id="section-185">34.9 验收与后续开发入口<a class="anchor" href="#section-185" aria-label="链接到本节">#</a></h3>
 <p>规则测试覆盖提示词优先、正文动作时间不误识别、歧义、接口范围、有效超长原片、旧QA升级、人工拒绝保持和不同平台模式能力。浏览器专项覆盖小白一次生成、对白提取、独立Pavo草稿、设置按钮、真实WASM生成超过12秒测试输入、直接采用、按真实长度拼接、自动上传优化同名素材及动态测试平台标签；所有服务响应受控，未调用真实收费生成接口。</p>
 <p>后续维护先改models能力与平台适配器，再改通用UI；保持prompt解析与QA时长为分离职责。新增需要语义判断的功能须明确是否调用模型、隐私边界和失败回退，不把规则匹配写成智能理解。实际执行数量、证据路径和失败修复记录见验证记录，本章不替代逐轮验证文件。</p>
+<h2 id="section-186">35. 1.2.1 顶栏版本切换、极简工作台与Pavo提交交互（2026-10-03）<a class="anchor" href="#section-186" aria-label="链接到本节">#</a></h2>
+<h3 id="section-187">35.1 本轮范围与界面结构<a class="anchor" href="#section-187" aria-label="链接到本节">#</a></h3>
+<p>本章在1.2.0上增补，采用用户本轮两张截图及文字要求。上一章记录的初始位置与Pavo初始参数属于1.2.0版本说明，以本章作为当前实现依据。当前产品、入口资源查询参数、package和阅读版统一标注1.2.1。</p>
+<p>顶栏左侧是位置导航，正中是“小白版 / 专家版”及对应解释，右侧是密钥状态 / 帮助 / 头像。选择按钮具有显著选中色、aria-pressed及通过aria-describedby关联的解释。宽屏使用两侧等宽的三列网格，使中间组以主内容区为中心；中等宽度把解释排到选择按钮下方；≤760px中间组成为顶栏第二行，避免与右侧状态重叠。隐藏或换行只调整呈现，不复制元素ID。</p>
+<p>小白版工作台首个内容区是PavoAI。隐藏区域包括：当前创作项目 / 全新项目 / 项目选择一整栏；文件夹名、选择 / 重新授权按钮、任务 / 素材统计、API请求限制一整栏；保存位置及备份详情。专家版显示这些原管理区域。任务与成片、本地素材库、连接与密钥仍可访问，顶栏切换在各页可用，不强制导航到另一页。</p>
+<h3 id="section-188">35.2 模式选择、草稿与目录授权<a class="anchor" href="#section-188" aria-label="链接到本节">#</a></h3>
+<p>操作版本保存在浏览器state/experience。首次未选择版本默认为easy；以小白版载入或点击“小白版”时进入pavo。单段、批量、Pavo提示词、设置和已选素材仍分别保存，切换不会覆盖其它模式草稿，也不会复制 / 清空制作记录或素材。专家版保留当前创作标签，用户可以选择单段或批量；三个创作标签继续提供键盘切换。</p>
+<p>隐藏目录栏并不解除保存正确性约束。已有授权目录沿用；首次直接点生成时才请求选择输出目录。取消选择不提交API，授权失败提示后停止。已有项目恢复、references备份和素材源文件只引用的规则继续执行；必要的未知项目恢复决策不能凭空猜测。管理区隐藏不等于不保存，也不影响任务页全局范围。</p>
+<h3 id="section-189">35.3 Pavo默认参数与设置收起<a class="anchor" href="#section-189" aria-label="链接到本节">#</a></h3>
+<p>当前Agnes配置下，新Pavo草稿默认16:9、12s、720p（真实profile为720P）；显示、隐藏字段和参数弹层一致。Auto依旧可手动选，历史已保存的用户设置按草稿恢复，不强制每次切标签改回默认。仅对没有pavoDefaultsVersion标记且恰好为旧默认Auto / 4s的草稿，在首次升级时更新为16:9 / 12s，保留其提示词和素材；保存标记1.2.1后，用户再手动选Auto / 4s不会被重置。其它旧参数组合保持。提示词明确视频时长仍覆盖界面12秒；返回原片超12秒仍直接采用。后续平台分辨率与合法时长由profile决定，不对其它平台套用720p或12秒。</p>
+<p>点击设置按钮展开，再点该按钮收起。点击 / 触碰设置框之外，或键盘焦点移到设置框和设置按钮之外，自动收起；设置框内选择比例或时长不会收起。×保留为辅助动作；Escape收起并把焦点还给设置按钮。收起同步aria-expanded，不通过失焦取消已经选中的参数。页面切换创作标签也收起原设置框。</p>
+<h3 id="section-190">35.4 成功提交后的60秒冷却与数据规则<a class="anchor" href="#section-190" aria-label="链接到本节">#</a></h3>
+<p>当前Agnes profile新增submission.cooldownSeconds=60。平台成功返回有效video_id后，Attempt记录acceptedAt，并以platformId（没有则profileId）为键将最后成功时间写入state/submission-cooldowns。每次显示 / 提交同时读取本项目Attempt和浏览器平台记录，取最新时间。刷新或切换创作项目不清除冷却；同平台不同模型共同遵循其平台间隔，其他平台依据自身能力配置独立处理。</p>
+<p>剩余时间remaining=max(0,ceil((acceptedAt+cooldownSeconds*1000-当前时间)/1000))。到截止时刻恢复按钮；不使用递减累加器，后台标签暂停定时器后也按实际时钟计算。未返回有效video_id的未知结果不被伪装成提交成功，继续由原未知提交保护禁止重发。旧已知任务没有acceptedAt时，仅兼容采用submittedAt，不回写冒充准确受理时间。</p>
+<p>小白版与Pavo的一键生成按钮在冷却期不可用，旁边显示当前平台、成功受理说明、60秒要求及动态剩余秒数。表单提交入口也重新检查，避免仅靠灰按钮；冷却期不新建Job、不入队、不POST。仍能编辑提示词和添加素材。已受理任务继续按原编号查询、下载及校验，GET查询和媒体下载不重置成功提交时间。</p>
+<p>专家版可以预先检查和加入待提交队列；实际API POST在Transport中等待冷却截止。这个等待与原有≥90秒认证请求间隔、Retry-After / 退避共存，采用最晚允许时间，不能以60秒替换原请求防重规则。因此“60秒冷却到期”表示允许再次发起生成操作，并不承诺POST马上发送。批量任务逐项遵守实际平台及请求间隔，冷却不会取消既有批次或复制提交。原收费请求不做自动未知结果重试。</p>
+<p>浏览器时钟与本机持久化是客户端约束，不是跨设备、跨网站端口的账户限额服务。服务器拒绝或要求更长等待时仍采用服务端退避；不能宣称凭本机倒计时绕过平台限制。</p>
+<h3 id="section-191">35.5 实现入口与验收要求<a class="anchor" href="#section-191" aria-label="链接到本节">#</a></h3>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>入口</th>
+<th>职责</th>
+<th>验收依据</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>index.html / src/style.css</td>
+<td>顶栏组、默认隐藏字段、响应式、提示区域</td>
+<td>宽屏中间组居中；390px无横向溢出；专家栏完整恢复</td>
+</tr>
+<tr>
+<td>src/app.js</td>
+<td>默认Pavo、保留草稿、框外收起、冷却提示 / 防再次入队</td>
+<td>切换与刷新后草稿保留；框内选择不收起；框外点击及焦点自动收起</td>
+</tr>
+<tr>
+<td>src/models.js</td>
+<td>当前平台成功冷却配置</td>
+<td>当前Agnes60秒；新增平台可独立配置</td>
+</tr>
+<tr>
+<td>src/submission-policy.js</td>
+<td>读成功Attempt、平台记录、边界秒数及提示</td>
+<td>未成功不计成功时间；精确60秒截止；项目切换保留；查询不重置</td>
+</tr>
+<tr>
+<td>src/engine.js</td>
+<td>接受后记录成功时间；真实POST等待</td>
+<td>有效video_id先留存；未知POST防重仍有效；不延迟原下载</td>
+</tr>
+<tr>
+<td>tests/experience-browser.mjs / submission-policy.test.mjs</td>
+<td>隔离真实UI、受控时钟及合成API</td>
+<td>冷却期第二次触发不产生新Job / POST；到期解锁；真实媒体仍能完成</td>
+</tr>
+</tbody></table>
+</div>
+<p>测试只能使用隔离浏览器数据、合成密钥和受控接口，不能为验收重复提交用户测试镜头。实际运行结果另记docs/验证记录.md；设计验收要求不等于已完成的运行证据。Markdown为源，HTML由tools/build-design-doc.mjs重建。</p>
 <footer class="reader-footer">本文由同目录 Markdown 生成。以当前源码和用户最新要求核对；未实现功能与未执行检查不得冒充完成。® YiQiXP</footer></article></main>
 </body></html>

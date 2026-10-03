@@ -12,9 +12,10 @@ import {installPlaybackController} from './playback.js';
 import {QueuePanel} from './queue-panel.js';
 import {promptSpec,reconcileDurationQA} from './prompt-spec.js';
 import {MODEL_PROFILES,modelProfile,modelCapability,modelOptionLabel} from './models.js';
+import {submissionCooldown,cooldownMessage} from './submission-policy.js';
 
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
-let project,folder,runner,credentials,assetLibrary,batchPanel,queuePanel,batchMode=false,creationMode='single',experience='easy',selected=[],batchSelected=[],pavoSelected=[],exclusive=false,currentEdit=null,importTarget=null,renderId=0,queueLimit=60,selectedView='studio',directoryBusy=false;
+let project,folder,runner,credentials,assetLibrary,batchPanel,queuePanel,batchMode=false,creationMode='single',experience='easy',selected=[],batchSelected=[],pavoSelected=[],exclusive=false,currentEdit=null,importTarget=null,renderId=0,queueLimit=60,selectedView='studio',directoryBusy=false,preparing=false,cooldownUpdating=false;
 const urls=new Map();
 const playback=installPlaybackController();
 function toast(text,error=false){
@@ -28,7 +29,7 @@ function run(fn){return async event=>{try{if(!exclusive)throw Error('另一个X-
 function on(id,event,fn){$(id).addEventListener(event,run(fn));}
 const draftFields=['shot-id','episode','prompt','generation-mode','seconds','aspect','dialogue','seed','first-frame','last-frame','batch-input','batch-seconds','batch-aspect','batch-episode','batch-id-prefix','pavo-prompt','pavo-aspect','pavo-seconds','pavo-generation-mode','video-model','pavo-model'];
 let draftTimer;
-function captureDraft(){if(!project?.studios)return;activeStudio(project).draft={batchMode,creationMode,fields:Object.fromEntries(draftFields.map(id=>[id,$('#'+id).value])),selected:[...selected],batchSelected:[...batchSelected],pavoSelected:[...pavoSelected],continuity:$('#continuity').checked};}
+function captureDraft(){if(!project?.studios)return;activeStudio(project).draft={batchMode,creationMode,pavoDefaultsVersion:'1.2.1',fields:Object.fromEntries(draftFields.map(id=>[id,$('#'+id).value])),selected:[...selected],batchSelected:[...batchSelected],pavoSelected:[...pavoSelected],continuity:$('#continuity').checked};}
 async function save(){captureDraft();await saveProject(project,folder);await render();}
 function event(kind,message,id){recordEvent(project,kind,message,id);}
 async function localURL(key){if(!urls.has(key))urls.set(key,URL.createObjectURL(await blob(key)));return urls.get(key);}
@@ -54,6 +55,13 @@ function updateModelUI(){
   const p=modelCapability($('#pavo-model').value,$('#pavo-generation-mode').value),row=$('#pavo-duration-options'),values=[];for(let n=p.minSeconds;n<=p.maxSeconds;n+=p.step)values.push(n);if(!values.includes(Number($('#pavo-seconds').value)))$('#pavo-seconds').value=p.minSeconds;
   row.innerHTML=values.map(n=>`<button type="button" data-pavo-seconds="${n}">${n}s</button>`).join('');$('.pavo-resolution').textContent=p.profile.resolution;$('.pavo-settings small').textContent=`提示词明确时长优先；${p.profile.platformName} 此模式请求最多 ${p.maxSeconds} 秒，较长返回原片直接采用。`;
   $('.pavo-caption').textContent=`全能模式 = 图片 / 声音参考。使用 ${p.profile.platformName} 生成，X-AI 自动完成检查、下载和保存。`;updatePavoSettings();
+}
+async function updateSubmissionControls(){
+  if(!project||cooldownUpdating)return;cooldownUpdating=true;
+  try{const d=defaults(),c=submissionCooldown(project,d.profileId,await get('state','submission-cooldowns')||{}),blocked=simplified()&&c.remaining>0;
+    const notice=$('#submission-cooldown');notice.hidden=!blocked;notice.textContent=blocked?cooldownMessage(c):'';
+    for(const id of ['add-jobs','pavo-submit']){$('#'+id).disabled=preparing||blocked;$('#'+id).title=blocked?`请等待 ${c.remaining} 秒后再生成`:'';}
+  }finally{cooldownUpdating=false;}
 }
 function applyExperience(){document.body.dataset.experience=experience;for(const id of ['shot-id','episode'])$('#'+id).required=!simplified();for(const value of ['easy','expert'])$('#experience-'+value).setAttribute('aria-pressed',String(experience===value));$('#experience-description').textContent=experience==='easy'?'填入提示词、添加素材，点击生成。其余交给 X-AI。':'完整参数、素材处理和队列操作，由你逐项控制。';$('#add-jobs').innerHTML=simplified()?'生成视频 <span>→</span>':batchMode?'检查整批并加入队列 <span>→</span>':'检查并加入队列 <span>→</span>';}
 function updateBatchDefaultsSummary(){const d=batchDefaults();$('#batch-defaults-summary').textContent=`${d.seconds} 秒 · ${d.aspect} · ${d.episode} · ${batchSelected.length?batchSelected.length+' 项共用素材':'无共用素材'}`;}
@@ -87,7 +95,7 @@ async function useReferences(ids,{importing=false}={}){
   return '';
 }
 
-async function render(){
+async function render(){await updateSubmissionControls();
   if(!project)return;const id=++renderId,ready=project.jobs.filter(j=>['ready','approved'].includes(j.state)).length,total=project.jobs.length;$('#nav-count').textContent=total;$('#ready-count').textContent=String(ready).padStart(2,'0');$('#total-count').textContent=String(total).padStart(2,'0');$('#overall-progress').style.width=(total?ready/total*100:0)+'%';
   if(!folder){$('#directory-name').textContent='连接一个本地文件夹';$('#directory-desc').textContent='素材、视频和记录保存在本地';$('#restore-folder').hidden=true;}
   if(folder){$('#directory-name').textContent=folder.name;const granted=await permitted(folder);$('#directory-desc').textContent=granted?'已授权 · 文件自动保存到此目录':'文件夹已记住，开始前请重新授权。';$('#restore-folder').hidden=granted;}
@@ -175,14 +183,15 @@ async function init(){
     $('#job-form').setAttribute('aria-labelledby','mode-'+creationMode);$('#batch-panel').hidden=!batch;$('#pavo-settings').hidden=true;$('#pavo-settings-toggle').setAttribute('aria-expanded','false');
     $('#validation-output').replaceChildren();$('#auto-assets-feedback').hidden=true;
     $('#mode-heading-note').textContent=batch?'批量编排':creationMode==='pavo'?'PavoAI 创作':'单镜创作';$('#creation-mode-note').innerHTML=batch?'<strong>多段一次生成</strong><span>在下方清单编排多镜，读取引用后整批检查；缺省参数在“批量默认设置”里调整。</span>':'<strong>单段生成</strong><span>填写一段画面与动作，生成一个视频。</span>';
-    applyExperience();updateModelUI();
+    applyExperience();updateModelUI();updateSubmissionControls().catch(e=>toast(friendlyError(e),true));
   }
   async function loadStudioDraft(){
     playback.pauseAll();clearTimeout(draftTimer);batchPanel.resetSource();assetLibrary.resetFilters();const draft=activeStudio(project).draft;
     for(const id of draftFields){const el=$('#'+id);if(el instanceof HTMLSelectElement)el.value=el.querySelector('option[selected]')?.value||el.options[0].value;else el.value=el.defaultValue;}
     selected=draft?.selected?.filter(id=>project.assets.some(a=>a.id===id))||[];batchSelected=draft?.batchSelected?.filter(id=>project.assets.some(a=>a.id===id))||[];pavoSelected=draft?.pavoSelected?.filter(id=>project.assets.some(a=>a.id===id))||[];
     if(draft)for(const id of draftFields)if(id!=='first-frame'&&id!=='last-frame'&&typeof draft.fields[id]==='string')$('#'+id).value=draft.fields[id];
-    $('#continuity').checked=draft?.continuity??false;switchCreationMode(draft?.creationMode||draft?.batchMode||false);updateMode();updatePavoSettings();await renderSelected();
+    if(draft&&!draft.pavoDefaultsVersion&&draft.fields['pavo-aspect']==='Auto'&&draft.fields['pavo-seconds']==='4'){$('#pavo-aspect').value='16:9';$('#pavo-seconds').value='12';}
+    $('#continuity').checked=draft?.continuity??false;switchCreationMode(experience==='easy'?'pavo':draft?.creationMode||draft?.batchMode||false);updateMode();updatePavoSettings();await renderSelected();
     if(draft&&$('#generation-mode').value==='keyframe')for(const id of ['first-frame','last-frame'])$('#'+id).value=effectiveAsset(project.assets.find(a=>a.id===draft.fields[id]),project.assets)?.id||'';
     if(!draft){let n=1;while(project.jobs.some(j=>j.id==='S'+String(n).padStart(2,'0')))n++;$('#shot-id').value='S'+String(n).padStart(2,'0');let ep=1;while(project.jobs.some(j=>j.episode==='EP'+String(ep).padStart(2,'0')))ep++;$('#episode').value=$('#batch-episode').value='EP'+String(ep).padStart(2,'0');$('#batch-id-prefix').value=$('#shot-id').value;}
     $('#prompt-count').textContent=$('#prompt').value.length+' 字';await render();await renderAssets();
@@ -199,12 +208,15 @@ async function init(){
   on('#mode-pavo','click',()=>switchCreationMode('pavo'));
   for(const id of ['#mode-single','#mode-batch','#mode-pavo'])on(id,'click',()=>{captureDraft();return saveProject(project,folder);});
   for(const id of ['#mode-single','#mode-batch','#mode-pavo'])on(id,'keydown',e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const modes=['single','batch','pavo'],index=e.key==='Home'?0:e.key==='End'?2:(modes.indexOf(creationMode)+(e.key==='ArrowLeft'?2:1))%3;switchCreationMode(modes[index]);$('#mode-'+creationMode).focus();captureDraft();saveProject(project,folder).catch(e=>toast(friendlyError(e),true));}});
-  for(const value of ['easy','expert'])on('#experience-'+value,'click',async()=>{experience=value;applyExperience();await put('state','experience',value);});
+  for(const value of ['easy','expert'])on('#experience-'+value,'click',async()=>{experience=value;if(value==='easy')switchCreationMode('pavo');else applyExperience();await put('state','experience',value);captureDraft();await saveProject(project,folder);});
   on('#pavo-upload','click',()=>pickAssets(true));on('#pavo-library','click',()=>view('assets'));
   on('#pavo-settings-toggle','click',()=>{const open=$('#pavo-settings').hidden;$('#pavo-settings').hidden=!open;$('#pavo-settings-toggle').setAttribute('aria-expanded',String(open));});
-  on('#pavo-settings-close','click',()=>{$('#pavo-settings').hidden=true;$('#pavo-settings-toggle').setAttribute('aria-expanded','false');});
+  const closePavoSettings=()=>{$('#pavo-settings').hidden=true;$('#pavo-settings-toggle').setAttribute('aria-expanded','false');};
+  on('#pavo-settings-close','click',closePavoSettings);
+  for(const eventName of ['pointerdown','focusin'])document.addEventListener(eventName,e=>{if(!$('#pavo-settings').hidden&&!e.target.closest('#pavo-settings,#pavo-settings-toggle'))closePavoSettings();});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#pavo-settings').hidden){closePavoSettings();$('#pavo-settings-toggle').focus();}});
   $('#pavo-settings').addEventListener('click',e=>{const b=e.target.closest('[data-pavo-aspect],[data-pavo-seconds]');if(!b)return;if(b.dataset.pavoAspect)$('#pavo-aspect').value=b.dataset.pavoAspect;else $('#pavo-seconds').value=b.dataset.pavoSeconds;updatePavoSettings();captureDraft();saveProject(project,folder).catch(e=>toast(friendlyError(e),true));});
-  for(const id of ['#video-model','#pavo-model','#pavo-generation-mode'])on(id,'change',updateModelUI);
+  for(const id of ['#video-model','#pavo-model','#pavo-generation-mode'])on(id,'change',async()=>{updateModelUI();await updateSubmissionControls();});
   on('#batch-default-library','click',()=>view('assets'));
   for(const id of ['#batch-seconds','#batch-aspect','#batch-episode','#batch-id-prefix']){on(id,'input',updateBatchDefaultsSummary);on(id,'change',()=>{updateBatchDefaultsSummary();if($('#batch-input').value.trim())batchPanel.preview();});}
   on('#generation-mode','change',updateMode);on('#prompt','input',()=>$('#prompt-count').textContent=$('#prompt').value.length+' 字');
@@ -215,8 +227,7 @@ async function init(){
   $('#drop-zone').addEventListener('dragover',e=>{e.preventDefault();$('#drop-zone').classList.add('dragging');});$('#drop-zone').addEventListener('dragleave',()=>$('#drop-zone').classList.remove('dragging'));$('#drop-zone').addEventListener('drop',run(async e=>{e.preventDefault();$('#drop-zone').classList.remove('dragging');ensureIdle();const files=[],metadata=new Map();for(const item of e.dataTransfer.items){if(item.kind!=='file')continue;const handle=await item.getAsFileSystemHandle?.();if(handle?.kind==='file'){const root=uid(),file=await handle.getFile();await put('handles','source:'+root,handle);files.push(file);metadata.set(file,{storage:'source',sources:[{root,rootName:'拖入的原文件',path:file.name}]});}else{const file=item.getAsFile();if(file)files.push(file);}}if(files.length)await planImport(files,{metadata,reference:true});else await importFiles([...e.dataTransfer.files]);}));
   on('#batch-example','click',()=>{batchPanel.invalidate();$('#batch-input').value='晨雾中的森林，小熊从画面左侧走入，停在小溪旁。手绘水彩风格，柔和晨光。\n---\n小熊蹲下，用手指轻触溪水，水面出现轻微涟漪。镜头缓缓推近。\n---\n小熊站起来望向森林深处的一点暖光，露出好奇的表情。镜头保持稳定。';});
   on('#download-template','click',()=>downloadFile('X-AI_批量分镜模板.json',JSON.stringify({shots:[{id:'A01-01',episode:'A01',mode:'reference',seconds:8,aspect_ratio:'9:16',prompt:'以<Picture 1>作为人物参考，小熊走进森林。',dialogue:'',files:['角色图.png','环境声.wav']},{id:'A01-02',episode:'A01',mode:'reference',seconds:8,aspect_ratio:'9:16',prompt:'从上一镜结束位置继续，小熊停下，抬头看向树冠。',files:['角色图.png'],continuity_from:'A01-01'}]},null,2)));
-  let preparing=false;
-  on('#job-form','submit',async e=>{e.preventDefault();if(preparing)return;ensureIdle();const auto=simplified();
+  on('#job-form','submit',async e=>{e.preventDefault();if(preparing)return;const auto=simplified(),c=submissionCooldown(project,defaults().profileId,await get('state','submission-cooldowns')||{});if(auto&&c.remaining){await updateSubmissionControls();toast(cooldownMessage(c),true);return;}ensureIdle();
     // Directory permission needs a real user gesture; request it at this entry point.
     if(auto&&!folder){await connectFolder();if(!folder)return;}
     if(auto&&!await permitted(folder,true))throw Error('请授权保存目录后再生成。');
@@ -239,7 +250,7 @@ async function init(){
     project.jobs.push(...jobs);for(const j of jobs)event('input_approved',`素材格式与参数检查通过；请求 ${j.seconds} 秒（${j.durationSource}）；内容尚未审核`,j.id);await save();toast(auto?'检查通过，正在自动生成并保存视频。':`${jobs.length} 镜已加入待提交队列。`);view('queue');
     if(!batchMode){let n=1;while(project.jobs.some(j=>j.id==='S'+String(n).padStart(2,'0')))n++;$('#shot-id').value='S'+String(n).padStart(2,'0');}
     if(auto){$('#pavo-settings').hidden=true;await runner.start({onlyUids:jobs.map(j=>j.uid)});}
-    }finally{preparing=false;$('#add-jobs').disabled=$('#pavo-submit').disabled=false;}
+    }finally{preparing=false;await updateSubmissionControls();}
   });
   on('#queue-filter','change',render);on('#refresh-queue','click',async()=>{queuePanel.updatedAt=Date.now();queuePanel.update();if(directoryBusy||assetLibrary?.busy||batchPanel?.busy){toast('已刷新页面进度；当前本地处理完成后可查询服务端。');return;}try{const result=await runner.refreshStatus();if(!runner.running&&!runner.assembling)await render();toast(result.message);}finally{queuePanel.update();}});on('#start-queue','click',()=>{ensureIdle();return runner.start();});on('#pause-queue','click',()=>{runner.pauseNew=true;queuePanel.update();toast('将完成当前任务的查询和下载，然后停止提交新任务。');render();});
   on('#export-project','click',()=>downloadFile('project.json',JSON.stringify(redact(project),null,2)));on('#export-notes','click',async()=>{const md=reportMarkdown(project);downloadFile('X-AI_制作过程与结果.md',md,'text/markdown');if(folder&&await permitted(folder))await writeFile(folder,'X-AI_制作过程与结果.md',md);});
@@ -274,6 +285,6 @@ async function init(){
   }));
   setInterval(()=>{if(selectedView==='queue')queuePanel.update();},1000);
   window.addEventListener('beforeunload',e=>{if(runner.running||runner.refreshing||runner.assembling||assetLibrary?.busy||batchPanel?.busy||directoryBusy){e.preventDefault();e.returnValue='';}});
-  await loadStudioDraft();captureDraft();await saveProject(project,folder);document.documentElement.dataset.ready='true';
+  await loadStudioDraft();captureDraft();await saveProject(project,folder);document.documentElement.dataset.ready='true';setInterval(()=>updateSubmissionControls().catch(()=>{}),1000);
 }
 init().catch(e=>toast('初始化失败：'+friendlyError(e),true));
