@@ -1,9 +1,10 @@
-"""Local-only, same-origin recovery for the known Agnes output CDN; no API relay."""
+"""Loopback media recovery for local/explicit Pages origins; no API relay."""
 import json
 import urllib.parse
 import urllib.request
 import urllib.error
 from connector import valid_media_url
+import media_session
 
 MAX_MEDIA = 512_000_000
 MEDIA_HOST = 'cos-platform-outputs.agnes-ai.cn'
@@ -30,14 +31,26 @@ class Redirect(urllib.request.HTTPRedirectHandler):
 
 
 def relay(handler):
+    def reject(status, code):
+        # Drain only a small, bounded request before closing. On Windows closing
+        # over unread POST bytes can reset the socket and hide the actual error.
+        try:
+            size = int(handler.headers.get('Content-Length', '0'))
+            if 0 < size <= 8192:
+                handler.connection.settimeout(2)
+                handler.rfile.read(size)
+        except (OSError, ValueError):
+            pass
+        media_session.reply(handler, status, {'code': code})
     port = handler.server.server_address[1]
     expected = {f'http://{host}:{port}' for host in ('127.0.0.1', 'localhost')}
     origin = handler.headers.get('Origin', '')
-    if origin not in expected or handler.headers.get('Sec-Fetch-Site', 'same-origin') != 'same-origin':
-        handler.send_error(403, 'Only this local X-AI page may download')
+    local = origin in expected and handler.headers.get('Sec-Fetch-Site', 'same-origin') == 'same-origin' and media_session.loopback_host(handler)
+    if not local and not media_session.valid_token(handler):
+        reject(403, 'media_session_required')
         return
     if handler.headers.get('Authorization') or handler.headers.get('Cookie'):
-        handler.send_error(400, 'Credentials are not accepted')
+        reject(400, 'credentials_refused')
         return
     started = False
     def error_response(status, code, upstream_status=None, permanent=False, retry_after=None):

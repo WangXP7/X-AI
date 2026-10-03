@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="X-AI 1.2.5详细设计：产品、界面、架构、数据、文件、递归引用、队列、校验、恢复、部署与开发交接。">
+<meta name="description" content="X-AI 1.2.6详细设计：产品、界面、架构、数据、文件、递归引用、队列、校验、恢复、部署与开发交接。">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
-<title>X-AI 1.2.5 · 详细设计文档</title>
+<title>X-AI 1.2.6 · 详细设计文档</title>
 <style>
 *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;color:#262c3c;background:#f5f4f8;font:16px/1.85 'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif}.paper p,.paper li{overflow-wrap:anywhere}
 a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{position:fixed;inset:0 auto 0 0;width:310px;overflow:auto;padding:28px 23px;background:#f9f7fd;border-right:1px solid #e0d9ef}.reader-brand{font-size:25px;font-weight:800;letter-spacing:1px;color:#2c2546}.reader-brand small{font-size:15px;font-weight:500;display:block;letter-spacing:0;color:#746686;margin-top:4px}.reader-meta{margin:16px 0 20px;font-size:14px;line-height:1.75;color:#6b607a}.reader-nav nav{display:grid;gap:5px}.reader-nav nav a{display:block;text-decoration:none;font-size:14px;line-height:1.6;padding:6px 8px;border-radius:6px}.reader-nav nav a:hover{background:#eae3f7}.reader-nav .level-2{font-weight:650;border-top:1px solid #ebe5f2;padding-top:12px;margin-top:4px}.reader-nav .level-3{padding-left:20px;color:#6b607a}
@@ -15,7 +15,7 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 @media print{body{background:white;font-size:11pt;color:#111}.reader-nav,.document-bar,.anchor{display:none}.document{margin:0;padding:0;max-width:none}.paper{border:0;padding:0;max-width:none;box-shadow:none}h1{font-size:24pt}h2{break-before:auto;font-size:17pt}h3{font-size:13pt}h1,h2,h3{break-after:avoid}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f2f2;color:#222}pre code{white-space:pre-wrap;color:#222}.table-scroll{overflow:visible;border:0}table{min-width:0;font-size:9pt}tr{break-inside:avoid}.diagram{break-inside:avoid}details{display:none}a{color:inherit}}
 </style></head><body>
-<aside class="reader-nav"><div class="reader-brand">X-AI <small>详细设计文档 · 1.2.5</small></div><p class="reader-meta">基准：2026-10-03 · 北京时间<br>实现、验证与扩展分别说明<br>正文约 95,702 字符 · 40 章</p><nav aria-label="文档目录"><a class="level-2" href="#section-2">0. 阅读方式、状态标记与依据</a>
+<aside class="reader-nav"><div class="reader-brand">X-AI <small>详细设计文档 · 1.2.6</small></div><p class="reader-meta">基准：2026-10-03 · 北京时间<br>实现、验证与扩展分别说明<br>正文约 99,523 字符 · 41 章</p><nav aria-label="文档目录"><a class="level-2" href="#section-2">0. 阅读方式、状态标记与依据</a>
 <a class="level-3" href="#section-3">0.1 阅读路径</a>
 <a class="level-3" href="#section-4">0.2 文档用语</a>
 <a class="level-3" href="#section-5">0.3 依据与冲突处理</a>
@@ -237,11 +237,19 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 <a class="level-3" href="#section-221">39.3 惩罚识别与加法调整</a>
 <a class="level-3" href="#section-222">39.4 Retry-After与下载通道</a>
 <a class="level-3" href="#section-223">39.5 旧项目迁移与交互说明</a>
-<a class="level-3" href="#section-224">39.6 验收及边界</a></nav></aside>
-<main class="document"><div class="document-bar"><span>可直接双击阅读 · 无脚本 / 无联网依赖</span><a href="./X-AI详细设计文档.md" download>下载 Markdown 源文档</a><a href="../README.md">项目使用说明</a><span>可用浏览器 Ctrl+P 打印</span></div><article class="paper"><h1 id="section-1">X-AI 1.2.5 详细设计文档<a class="anchor" href="#section-1" aria-label="链接到本节">#</a></h1>
+<a class="level-3" href="#section-224">39.6 验收及边界</a>
+<a class="level-2" href="#section-225">40. 1.2.6 Pages 实际来源下载修复</a>
+<a class="level-3" href="#section-226">40.1 根因与此前验证遗漏</a>
+<a class="level-3" href="#section-227">40.2 通道选择与运行前提</a>
+<a class="level-3" href="#section-228">40.3 配置、协议与权限</a>
+<a class="level-3" href="#section-229">40.4 本机服务安全约束</a>
+<a class="level-3" href="#section-230">40.5 下载恢复状态与计时</a>
+<a class="level-3" href="#section-231">40.6 验收方法与证明边界</a>
+<a class="level-3" href="#section-232">40.7 文件与维护交接</a></nav></aside>
+<main class="document"><div class="document-bar"><span>可直接双击阅读 · 无脚本 / 无联网依赖</span><a href="./X-AI详细设计文档.md" download>下载 Markdown 源文档</a><a href="../README.md">项目使用说明</a><span>可用浏览器 Ctrl+P 打印</span></div><article class="paper"><h1 id="section-1">X-AI 1.2.6 详细设计文档<a class="anchor" href="#section-1" aria-label="链接到本节">#</a></h1>
 <blockquote>
 <p>产品：X-AI · 本地视频创作台<br>
-版本沿革：1.0 原设计；1.1 同名素材、自动关联、筛选与创作项目；1.1.1 单段互斥试听 / 试看；1.1.2 本地启动与连接恢复；1.1.3 原素材只引用与文件状态恢复；1.1.4 目录写入重试与批量映射保存；1.1.5 任务刷新与动态进度；1.1.6 紧凑进度与媒体下载恢复；1.2.0 小白版 / 专家版、PavoAI与动态平台能力；1.2.1 极简默认入口与提交冷却；1.2.2 自动排队与下载恢复；1.2.3 队列自检、后台校验与输入清空；1.2.4 下载检查点与模块版本一致性；1.2.5 操作独立间隔与渐进限流。新增与变更详见第27—39章。<br>
+版本沿革：1.0 原设计；1.1 同名素材、自动关联、筛选与创作项目；1.1.1 单段互斥试听 / 试看；1.1.2 本地启动与连接恢复；1.1.3 原素材只引用与文件状态恢复；1.1.4 目录写入重试与批量映射保存；1.1.5 任务刷新与动态进度；1.1.6 紧凑进度与媒体下载恢复；1.2.0 小白版 / 专家版、PavoAI与动态平台能力；1.2.1 极简默认入口与提交冷却；1.2.2 自动排队与下载恢复；1.2.3 队列自检、后台校验与输入清空；1.2.4 下载检查点与模块版本一致性；1.2.5 操作独立间隔与渐进限流；1.2.6 Pages自动媒体通道。新增与变更详见第27—40章。<br>
 文档基准日期：2026-10-03（北京时间）<br>
 代码目录：<code>D:\PRIVACY-REDACTED\REDACTED-DIR</code><br>
 面向读者：产品负责人、普通使用者、前端开发者、音视频开发者、测试人员及接手开发的 AI。<br>
@@ -249,6 +257,7 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 </blockquote>
 <p>当前文档按版本分章维护，冲突时后续章节取代对应旧规则。第27—36章记录1.1至1.2.2，第37章记录 <strong>1.2.3</strong> 队列自检、后台校验与输入清空，第38章记录 <strong>1.2.4</strong> 下载检查点、模块版本一致性及S03现场修复。历史验证保留原日期和版本，不能当成新功能的验证结果。</p>
 <p><strong>1.2.5最新规则见第39章</strong>：只有生成提交遵守当前平台超过60秒的间隔，默认61秒；查询与下载采用独立短间隔，429等明确限流反馈才逐步加长，恢复后逐步缩短。此规则取代旧章节中所有“全部认证请求90秒”和“正常排队自动指数退避”的实现描述。</p>
+<p><strong>1.2.6 新增规则见第40章</strong>：针对实际 Pages 来源的 CDN 跨域失败，增加指定来源的本机媒体通道自动发现与短期凭证；本机通道不再局限于同源页面。前端与本机工具必须配套更新，浏览器本地网络权限仍由使用者决定。本章覆盖旧章节关于 Pages 只能手动配对下载的说明。</p>
 <h2 id="section-2">0. 阅读方式、状态标记与依据<a class="anchor" href="#section-2" aria-label="链接到本节">#</a></h2>
 <h3 id="section-3">0.1 阅读路径<a class="anchor" href="#section-3" aria-label="链接到本节">#</a></h3>
 <div class="table-scroll"><table>
@@ -3715,5 +3724,70 @@ node tools/build-design-doc.mjs</code></pre></div>
 <h3 id="section-224">39.6 验收及边界<a class="anchor" href="#section-224" aria-label="链接到本节">#</a></h3>
 <p>验收包含：两次真实Transport创建调用的虚拟时刻差为61000ms；GET可位于该冷却窗口内；正常GET间隔10000ms；持续queued不增长；429两次使查询15000/20000ms，成功两次回到15000/10000ms；Retry-After=120完整等待；首次估算20秒后查询；媒体外层502中实际429导致等待25秒且不切换绕过；同一Transport并发GET不能修改POST局部截止时间；新实例继续读取持久化预算。</p>
 <p>回归继续验证未知POST不重发、明确429拒绝复用同一尝试、队列输入接收与自动接续、原片解码和内容审核独立。测试使用合成接口与受控时间，不为检验频率实际触发平台处罚。外部平台的额度、停机和未公开限制不保证消失；程序保留真实状态和原编号，不以缩短间隔伪装成功。实际执行结果另记验证记录1.2.5。</p>
+<h2 id="section-225">40. 1.2.6 Pages 实际来源下载修复<a class="anchor" href="#section-225" aria-label="链接到本节">#</a></h2>
+<h3 id="section-226">40.1 根因与此前验证遗漏<a class="anchor" href="#section-226" aria-label="链接到本节">#</a></h3>
+<p>现场 S04 的 <code>downloadDiagnostic</code> 明确记录 <code>version=1.2.5</code>、<code>pageOrigin=https://wangxp7.github.io</code>、<code>localEligible=false</code>，所有通道都是 direct，错误均为 <code>fetch_unreadable</code>，读取时已有55轮失败。实际 CDN 对该来源返回200及2,443,464字节MP4，但未返回 <code>Access-Control-Allow-Origin</code>。完整浏览器中从该来源直接 fetch 确实抛出 TypeError。</p>
+<p>旧版在 localhost 才启用 <code>__xai_media</code>，Pages 只有手动配对后才可能有 bridge，所以自动重试没有更换到可用路径。此前本机下载验证和 S03 手动补文件都不能证明 Pages 自动流程修好。1.2.6必须以实际页面来源、正常浏览器安全策略及真实视频验证，不能只改错误文案、清失败计数、缩短退避或人工设置ready。</p>
+<h3 id="section-227">40.2 通道选择与运行前提<a class="anchor" href="#section-227" aria-label="链接到本节">#</a></h3>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>页面 / 条件</th>
+<th>优先顺序</th>
+<th>结果</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>本机HTTP页面</td>
+<td>同源本机媒体 → 已配对连接器（如有）→ 直连</td>
+<td>延续原本机流程</td>
+</tr>
+<tr>
+<td>配置允许的HTTPS Pages，服务已启动且浏览器允许本机访问</td>
+<td>自动凭证媒体通道 → 已配对连接器（如有）→ 直连</td>
+<td>不用切换API连接模式，不填写配对码</td>
+</tr>
+<tr>
+<td>本机服务暂不可用</td>
+<td>尝试一次直连；仍不可读则等30秒再检测</td>
+<td>保留下载检查点，服务恢复自动接续</td>
+</tr>
+<tr>
+<td>浏览器明确拒绝本地网络权限</td>
+<td>不反复发起本机连接；直连失败后等待权限恢复</td>
+<td>显示“等待浏览器允许本机访问”，不能代替用户授权</td>
+</tr>
+<tr>
+<td>未配置的远程来源 / 其它CDN</td>
+<td>不自动访问本机，保留已有连接器或直连路径</td>
+<td>不能扫描端口或使用不受信任的公共代理</td>
+</tr>
+</tbody></table>
+</div>
+<p>Pages 是静态站点，不执行 Python。自动通道依赖已启动的本工程本机服务；仅上传网页文件不会在远端或访客电脑上自动安装服务。当前使用者已有4183服务，本轮更新并重启的是该服务。首次浏览器本地网络权限是浏览器强制边界，不承诺“任何设备无需安装或授权也能跨域下载”。已经允许后，正常任务不再需要用户介入下载恢复。</p>
+<h3 id="section-228">40.3 配置、协议与权限<a class="anchor" href="#section-228" aria-label="链接到本节">#</a></h3>
+<p>公开配置 <code>media-relay.json</code> 定义协议 <code>x-ai-media-v1</code>、精确 <code>pageOrigins</code> 和唯一 <code>endpoint</code>。当前允许 <code>https://wangxp7.github.io</code>，终点 <code>http://127.0.0.1:4183/</code>。来源以浏览器Origin为单位，不能用GitHub仓库路径冒充额外安全边界。其它站点必须由维护者明确配置，不从请求头自动登记，也不接受通配来源。端口变更须同步配置和CSP，程序不扫描局域网或其它端口。</p>
+<p>前端 <code>AutomaticMediaRelay.discover()</code> 先读取同源配置，核对页面来源与回环地址，再访问 <code>/__xai_media_session</code>。成功返回协议、15分钟失效时间和内存短期凭证；不返回工作区路径、PID、密钥或用户文件。前端仅保留内存，过期前30秒续取，不写浏览器持久化或项目诊断。服务重启时内存签名密钥更换，旧凭证自然失效；收到明确 <code>media_session_required</code> 时重新握手，不能把本机鉴权失效误认为视频链接过期。</p>
+<p>下载请求通过 <code>/__xai_media</code> POST JSON <code>{url}</code>，带 <code>X-XAI-Media-Token</code>。这个 POST 只是本地取片，不是收费生成提交，不占61秒平台提交槽位。API请求仍走用户原有设置，不把API密钥附到媒体请求中。</p>
+<h3 id="section-229">40.4 本机服务安全约束<a class="anchor" href="#section-229" aria-label="链接到本节">#</a></h3>
+<ol>
+<li>仅监听127.0.0.1；核对Host中的回环地址与实际监听端口，防止DNS重绑定来源混淆。</li>
+<li>同源本机页面延续旧流程；跨源请求必须同时满足配置Origin和短期凭证。凭证签名绑定Origin与到期时刻，伪造、过期、换来源全部拒绝。</li>
+<li>CORS仅用于两个媒体相关路径。不给静态文件、私有目录或认证API新增跨域访问能力；不放行Authorization、Cookie或任意请求头。预检只允许GET握手和POST媒体，按浏览器请求提供私有网络预检响应。</li>
+<li>URL仍只接受固定Agnes输出CDN的HTTPS <code>/videos/*.mp4</code>，检查端口、内嵌凭据、重定向和DNS/已配置代理。禁止本地IP、其它CDN、非视频响应、超512MB内容。</li>
+<li>上游只接收程序User-Agent；凭证、Cookie、Authorization均不转发。浏览器凭证请求统一credentials=omit，自动媒体路径拒绝重定向。</li>
+<li>来源拒绝或凭据拒绝时仅丢弃最多8KB已声明请求体，短超时后回JSON，避免Windows因未读取POST字节关闭连接而将明确403/400变成连接重置。未经授权请求绝不访问上游。</li>
+</ol>
+<h3 id="section-230">40.5 下载恢复状态与计时<a class="anchor" href="#section-230" aria-label="链接到本节">#</a></h3>
+<p>成功路径仍为原片完整读取 → 字节数/MP4签名校验 → SHA → 原片与回执落盘 → 项目检查点持久化 → 释放远端槽位 → 完整解码及抽帧。技术通过后ready，内容审核pending。返回12.256秒可直接采用，不按12秒请求上限判废。</p>
+<p>若HTTPS页面本轮全部通道都无法读取，新增 <code>media_channel_unavailable</code>。不重复同一轮三次无效直连，设置 <code>downloadWaitingFor</code> 为 <code>browser-permission</code> 或 <code>download-channel</code>，30秒后复查。卡片显示“已生成 · 等待下载通道”；有收到字节才显示实际下载进度。此类错误不触发获取相同链接的GET风暴。通道可用并成功后清除等待字段，自动继续保存。</p>
+<p>真实上游401/403/404/410仍按原video_id刷新链接；429及明确平台限制仍遵守Retry-After和小步增减算法，不换通道规避限流；正常流中断/非完整视频仍按原恢复策略重取，不能拼接未校验残片。30秒通道检测不是平台下载限速，也不改变61秒生成间隔、正常10秒查询和30秒队列自检。</p>
+<h3 id="section-231">40.6 验收方法与证明边界<a class="anchor" href="#section-231" aria-label="链接到本节">#</a></h3>
+<p><code>tests/pages-download-browser.mjs</code> 使用隔离Edge，来源为真实 <code>https://wangxp7.github.io/X-AI/</code>，仅将该站点静态资源映射到工作区新版文件。没有关闭web security；CDN与本机媒体HTTP响应均不Mock。浏览器本地网络权限分别显式设置为denied与granted，记录两种结果。生成API被拦截，测试不读取用户密钥或操作用户浏览器。</p>
+<p>主验收使用 S04 的真实原视频地址。断言旧直连TypeError、新通道首轮成功、2,443,464字节、原片/成片/回执SHA一致、720×1280、12.256秒、完整解码passed、状态ready、remoteBlocks=false、尝试数始终1。测试输出保存在仓库忽略的test-results，而非生产项目，不通过手工改写S04状态来证明修复。</p>
+<p>补充验收：真实本机服务拒绝过期/伪造凭证后前端自动续取；一次握手故障后Runner用真实30秒计时自行恢复并完成解码；浏览器明确拒绝权限时不谎报ready。Python覆盖精确来源、Host、预检、凭证、非目标CDN和禁止携带认证头。现有未知POST防重、独立间隔、流中断、过期链接、原片回执和队列自检继续回归。</p>
+<p><strong>隔离来源验证通过不等于公开Pages已经上线。</strong> 本轮修复先落代码、更新本机服务并验证，发布动作按仓库规则另行授权。公开页面仍显示1.2.5时仍会执行旧下载逻辑；正式发布后刷新载入1.2.6，沿用原任务恢复，不重新创建。</p>
+<h3 id="section-232">40.7 文件与维护交接<a class="anchor" href="#section-232" aria-label="链接到本节">#</a></h3>
+<p>新增 <code>src/media-relay.js</code>、<code>media-relay.json</code>、<code>tools/media_session.py</code>；修改Transport、下载恢复分类、状态显示、本机serve/local_media、运行版本和CSP；新增Pages实测、媒体会话安全与策略测试。发布时必须包含配置和Python新模块，漏发任一部分都不能认为已完成部署。入口模块图通过build-runtime统一锁到1.2.6，设计HTML从本Markdown重建。</p>
 <footer class="reader-footer">本文由同目录 Markdown 生成。以当前源码和用户最新要求核对；未实现功能与未执行检查不得冒充完成。® YiQiXP</footer></article></main>
 </body></html>

@@ -10,11 +10,12 @@ import {recoverDownloads,downloadDelay,shouldRefreshLink} from './download-recov
 import {downloadSaved,remoteBlocks,unresolvedSubmission} from './queue-health.js';
 import {savedDownload,rawDownloadPath,writeDownloadReceipt} from './download-checkpoint.js';
 import {APP_VERSION} from './runtime-version.js';
+import {AutomaticMediaRelay} from './media-relay.js';
 import {pacingKey,pacingConfig,pacingDue,pacingFeedback,platformPenalty,firstPollDelay} from './request-pacing.js';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 export class APIError extends Error{constructor(status,body,retryAfter){super(`接口返回${status}：${String(nested(body,['message','detail'])||'请求未成功').slice(0,140)}`);this.status=status;this.body=body;this.retryAfter=retryAfter;}}
 export class Transport {
-  constructor(context,onActivity=()=>{}){this.context=context;this.onActivity=onActivity;this.key='';this.bridgeToken='';this.nextAt=0;this.lastResponseAt=null;}
+  constructor(context,onActivity=()=>{}){this.context=context;this.onActivity=onActivity;this.key='';this.bridgeToken='';this.nextAt=0;this.lastResponseAt=null;this.mediaRelay=new AutomaticMediaRelay();}
   async api(route,payload,beforeSend,{notBefore=0}={}){
     if(!this.key)throw Error('请先解锁 API 密钥。');const {project}=this.context();const settings=project.settings;
     if(!ORIGINS.includes(settings.origin)||!route.startsWith('/')||route.startsWith('//'))throw Error('接口地址不受信任。');
@@ -50,18 +51,25 @@ export class Transport {
     const key=pacingKey(parsed.hostname,'media'),config=pacingConfig('media');let rate=await get('state',key)||{};
     if(rate.notBefore>Date.now()){this.onActivity({kind:'waiting',operation:'media',label:rate.reason==='platform'?'下载通道限流，等待恢复':'等待重试下载',waitUntil:rate.notBefore});while(rate.notBefore>Date.now())await sleep(Math.min(1000,rate.notBefore-Date.now()));}
     const local=['127.0.0.1','localhost'].includes(location.hostname)&&location.protocol==='http:'&&parsed.hostname==='cos-platform-outputs.agnes-ai.cn';
-    // An already paired connector is an additional channel, never a required user action.
-    const channels=[...(local?['local']:[]),...(bridge&&this.bridgeToken?['bridge']:[]),'direct'];let primaryError;
-    const diagnostic=this.mediaDiagnostic={version:APP_VERSION,pageOrigin:location.origin,localEligible:local,startedAt:now(),channels:[]};
+    this.onActivity({kind:'download',label:'正在检查视频下载通道',bytes:0,total:0});
+    let automatic=await this.mediaRelay.discover(url);
+    const channels=[...(local?['local']:[]),...(automatic.state==='ready'?['automatic']:[]),...(bridge&&this.bridgeToken?['bridge']:[]),'direct'];let primaryError;
+    const diagnostic=this.mediaDiagnostic={version:APP_VERSION,pageOrigin:location.origin,localEligible:local,relay:{state:automatic.state},startedAt:now(),channels:[]};
     for(let round=0;round<3;round++){
       for(const channel of channels){
         let reader;const started=Date.now();
         try{
-          const label=(channel==='local'?'正在通过本机取回原视频':channel==='bridge'?'正在通过已连接通道取回原视频':'正在直接下载原视频')+(round?` · 第 ${round+1} 次`:'');
+          if(channel==='automatic'){
+            automatic=await this.mediaRelay.discover(url);diagnostic.relay={state:automatic.state};
+            if(automatic.state!=='ready')throw new ConnectionError('media',channel,new TypeError('Media relay unavailable'));
+          }
+          const label=(['local','automatic'].includes(channel)?'正在通过本机取回原视频':channel==='bridge'?'正在通过已连接通道取回原视频':'正在直接下载原视频')+(round?` · 第 ${round+1} 次`:'');
           this.onActivity({kind:'download',label,bytes:0,total:0});
-          const endpoint=channel==='bridge'?'http://127.0.0.1:4174/media':channel==='local'?new URL('../__xai_media',import.meta.url):url;
-          const res=await fetch(endpoint,{method:channel==='direct'?'GET':'POST',headers:channel==='bridge'?{'Content-Type':'application/json','X-XAI-Token':this.bridgeToken}:channel==='local'?{'Content-Type':'application/json'}:{},body:channel==='direct'?undefined:JSON.stringify({url}),credentials:'omit',cache:'no-store',signal:AbortSignal.timeout(180000)});
-          if(!res.ok){let diagnostic;if(channel==='local'||channel==='bridge')try{diagnostic=await res.json();}catch{}const status=diagnostic?.upstreamStatus||res.status,retryAfter=diagnostic?.retryAfter||res.headers.get('Retry-After');const failure=new ConnectionError('media',channel,{status,permanent:diagnostic?.permanent});if(platformPenalty(status,diagnostic,retryAfter)){rate=pacingFeedback(rate,config,{status,body:diagnostic,retryAfter});await put('state',key,rate);failure.retryAt=rate.notBefore;failure.penalty=true;}throw failure;}
+          const endpoint=channel==='automatic'?automatic.endpoint:channel==='bridge'?'http://127.0.0.1:4174/media':channel==='local'?new URL('../__xai_media',import.meta.url):url;
+          const res=await fetch(endpoint,{method:channel==='direct'?'GET':'POST',headers:channel==='automatic'?{'Content-Type':'application/json','X-XAI-Media-Token':automatic.token}:channel==='bridge'?{'Content-Type':'application/json','X-XAI-Token':this.bridgeToken}:channel==='local'?{'Content-Type':'application/json'}:{},body:channel==='direct'?undefined:JSON.stringify({url}),credentials:'omit',cache:'no-store',redirect:channel==='direct'?'follow':'error',signal:AbortSignal.timeout(180000)});
+          if(!res.ok){let info;if(channel!=='direct')try{info=await res.json();}catch{}
+            if(channel==='automatic'&&info?.code==='media_session_required'){this.mediaRelay.failed();throw new ConnectionError('media',channel,{name:'MediaSessionExpired'});}
+            const status=info?.upstreamStatus||res.status,retryAfter=info?.retryAfter||res.headers.get('Retry-After');const failure=new ConnectionError('media',channel,{status,permanent:info?.permanent});if(platformPenalty(status,info,retryAfter)){rate=pacingFeedback(rate,config,{status,body:info,retryAfter});await put('state',key,rate);failure.retryAt=rate.notBefore;failure.penalty=true;}throw failure;}
           const type=res.headers.get('content-type')||'',total=Number(res.headers.get('content-length')||0);
           if(type&&!/^(video\/|application\/octet-stream)/i.test(type))throw new ConnectionError('media',channel,{status:415});
           if(total>512_000_000)throw new ConnectionError('media',channel,{status:413,permanent:true});
@@ -82,8 +90,15 @@ export class Transport {
           // Never combine partial bodies from different attempts or signed URLs.
           try{await reader?.cancel();}catch{}try{reader?.releaseLock();}catch{}
           if(failure.permanent||failure.penalty)throw failure;
+          if(channel==='automatic'&&failure.code==='fetch_unreadable')this.mediaRelay.failed();
           this.onActivity({kind:'download',label:'正在自动恢复下载',bytes:0,total:0});
         }
+      }
+      // CORS / missing local service cannot improve by repeating the identical
+      // unreadable request three times. Probe again with the 30-second self-check.
+      if(location.protocol==='https:'&&diagnostic.channels.filter(x=>x.round===round+1).every(x=>x.code==='fetch_unreadable')){
+        const failure=new ConnectionError('media','automatic',{name:'MediaChannelUnavailable'});
+        failure.waitingFor=automatic.state==='permission-denied'?'browser-permission':'download-channel';failure.retryAt=Date.now()+30000;failure.diagnostic=diagnostic;throw failure;
       }
       if(round<2)await sleep(1000*2**(round+1));
     }
@@ -201,17 +216,18 @@ export class Runner {
       const {folder}=this.context();let reading=true;
       let file=await savedDownload(folder,job);
       // A verified local original takes priority over a stale network backoff.
-      if(!file&&attempt.downloadRetryAt){this.setActivity({kind:'recovery',label:`下载恢复 · 已尝试 ${attempt.downloadFailures||0} 轮`,waitUntil:attempt.downloadRetryAt});let checkedAt=Date.now();while(Date.now()<attempt.downloadRetryAt){await sleep(Math.min(1000,attempt.downloadRetryAt-Date.now()));if(Date.now()-checkedAt>=30000){file=await savedDownload(folder,job);checkedAt=Date.now();if(file)break;}}}
+      if(!file&&attempt.downloadRetryAt){this.setActivity({kind:'recovery',label:attempt.downloadWaitingFor==='browser-permission'?'等待浏览器允许本机访问':attempt.downloadWaitingFor?'等待下载通道恢复 · 自动检测中':`下载恢复 · 已尝试 ${attempt.downloadFailures||0} 轮`,waitUntil:attempt.downloadRetryAt});let checkedAt=Date.now();while(Date.now()<attempt.downloadRetryAt){await sleep(Math.min(1000,attempt.downloadRetryAt-Date.now()));if(Date.now()-checkedAt>=30000){file=await savedDownload(folder,job);checkedAt=Date.now();if(file)break;}}}
       // Offline recovery wakes immediately on 'online', rather than losing the job.
       while(!file&&navigator.onLine===false){this.setActivity({kind:'recovery',label:'网络恢复后自动继续下载'});await new Promise(resolve=>{const finish=()=>{clearTimeout(timer);window.removeEventListener('online',finish);resolve();};const timer=setTimeout(finish,30000);window.addEventListener('online',finish,{once:true});});file=await savedDownload(folder,job);}
       try{
         if(!file){file=await this.transport.media(attempt.url);if(file.downloadDiagnostic)attempt.downloadDiagnostic=file.downloadDiagnostic;}
-        reading=false;delete attempt.downloadRetryAt;attempt.downloadRecovery=false;await this.saveDownloaded(job,file,attempt);delete attempt.forceDownload;this.launchLocalCheck(job,file);
+        reading=false;delete attempt.downloadRetryAt;delete attempt.downloadWaitingFor;attempt.downloadRecovery=false;await this.saveDownloaded(job,file,attempt);delete attempt.forceDownload;this.launchLocalCheck(job,file);
       }catch(e){
         attempt.lastProblem=networkRecord(e)||{at:now(),operation:reading?'media':'local',connection:this.context().project.settings.connection,code:e.name||'error',message:friendlyError(e)};
         if(e.diagnostic)attempt.downloadDiagnostic=e.diagnostic;
         if(e instanceof ConnectionError&&e.operation==='media'&&!e.permanent){
           attempt.downloadFailures=(attempt.downloadFailures||0)+1;attempt.downloadRecovery=true;job.state='download';job.error=null;
+          attempt.downloadWaitingFor=e.waitingFor||null;
           (attempt.downloadErrors??=[]).push(attempt.lastProblem);attempt.downloadErrors=attempt.downloadErrors.slice(-20);
           attempt.downloadPacingVersion=2;attempt.downloadRetryAt=Math.max(Date.now()+downloadDelay(),e.retryAt||0);this.event('download_recovery','自动恢复原任务下载，第 '+attempt.downloadFailures+' 轮',job.id);await this.persist();
           if(this.transport.key&&shouldRefreshLink(attempt,e)){
