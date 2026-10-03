@@ -40,8 +40,8 @@ def relay(handler):
         handler.send_error(400, 'Credentials are not accepted')
         return
     started = False
-    def error_response(status, code, upstream_status=None, permanent=False):
-        body=json.dumps({'code':code,'upstreamStatus':upstream_status,'permanent':permanent}).encode()
+    def error_response(status, code, upstream_status=None, permanent=False, retry_after=None):
+        body=json.dumps({'code':code,'upstreamStatus':upstream_status,'permanent':permanent,'retryAfter':retry_after}).encode()
         handler.send_response(status)
         handler.send_header('Content-Type','application/json')
         handler.send_header('Content-Length',str(len(body)))
@@ -80,7 +80,7 @@ def relay(handler):
         if started:
             handler.close_connection = True
         else:
-            error_response(502,'upstream_http',error.code)
+            error_response(502,'upstream_http',error.code,retry_after=error.headers.get('Retry-After'))
     except (BrokenPipeError, ConnectionResetError):
         pass
     except (ValueError, KeyError, TypeError):

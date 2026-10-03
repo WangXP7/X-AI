@@ -1,4 +1,6 @@
 import {QueueWatchdog} from './queue-watchdog.js';
+import {APP_VERSION} from './runtime-version.js';
+import {pacingKey,submissionGap} from './request-pacing.js';
 import {migrateAutomaticQueue} from './queue-health.js';
 import {recoverDownloads} from './download-recovery.js';
 import {taskProblem,taskStatus} from './network.js';
@@ -18,6 +20,7 @@ import {MODEL_PROFILES,modelProfile,modelCapability,modelOptionLabel,UPCOMING_MO
 import {submissionCooldown,cooldownMessage,pendingSubmission} from './submission-policy.js';
 
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+document.documentElement.dataset.runtimeVersion=APP_VERSION;
 let project,folder,runner,credentials,assetLibrary,batchPanel,queuePanel,watchdog,batchMode=false,creationMode='single',experience='easy',selected=[],batchSelected=[],pavoSelected=[],exclusive=false,currentEdit=null,importTarget=null,renderId=0,queueLimit=60,selectedView='studio',directoryBusy=false,preparing=false,cooldownUpdating=false,lastPavoQueued=null,lastPavoPrompt='';
 const urls=new Map();
 const playback=installPlaybackController();
@@ -40,7 +43,7 @@ function clearURL(key){if(urls.has(key)){URL.revokeObjectURL(urls.get(key));urls
 function view(name){playback.pauseAll();selectedView=name;$$('.view').forEach(v=>v.hidden=v.id!==name+'-view');$$('.nav[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===name));$('#view-label').textContent={studio:'创作工作台',queue:'任务与成片',assets:'本地素材库',guide:'操作指南'}[name];if(name==='assets')renderAssets();if(name==='queue')queuePanel?.update();window.scrollTo({top:0,behavior:'instant'});}
 function updateConnection(){const enabled=!!runner.transport.key;$('#key-dot').classList.toggle('on',enabled);$('#connection-status').classList.toggle('connected',enabled);$('#connection-status').innerHTML='<i></i>'+(enabled?(credentials?.activeLabel||'密钥')+'已启用':'未启用密钥');$('#connection-status').title=enabled?'已启用密钥，不代表 API 连接已验证。打开连接设置可检查。':'点击设置默认密钥或自己的密钥';}
 
-async function showSettings(){$('#connection-mode').value=project.settings.connection;$('#api-origin').value=project.settings.origin;$('#request-gap').value=project.settings.gap;$('#bridge-settings').hidden=project.settings.connection!=='bridge';await credentials.open();}
+async function showSettings(){$('#connection-mode').value=project.settings.connection;$('#api-origin').value=project.settings.origin;$('#request-gap').value=submissionGap(project.settings,modelProfile());$('#bridge-settings').hidden=project.settings.connection!=='bridge';await credentials.open();}
 function singleDefaults(){return {profileId:$('#video-model').value,id:$('#shot-id').value.trim(),episode:$('#episode').value.trim(),prompt:$('#prompt').value.trim(),seconds:Number($('#seconds').value),mode:$('#generation-mode').value,aspect:$('#aspect').value,dialogue:$('#dialogue').value.trim(),seed:$('#seed').value===''?null:Number($('#seed').value),assetIds:[...selected],firstFrame:$('#first-frame').value||null,lastFrame:$('#last-frame').value||null};}
 function batchDefaults(){return {profileId:$('#video-model').value,id:$('#batch-id-prefix').value.trim()||'S01',episode:$('#batch-episode').value.trim()||'EP01',prompt:'',seconds:Number($('#batch-seconds').value),mode:batchSelected.length?'reference':'text',aspect:$('#batch-aspect').value,dialogue:'',seed:null,assetIds:[...batchSelected],firstFrame:null,lastFrame:null};}
 const simplified=()=>experience==='easy'||creationMode==='pavo';
@@ -51,7 +54,7 @@ function updatePavoSettings(){for(const b of $$('[data-pavo-aspect]'))b.setAttri
 function updateModelUI(){
   const d=defaults(),{profile,minSeconds,maxSeconds,step}=modelCapability(d.profileId,d.mode);
   for(const el of $$('[data-current-platform]'))el.textContent=profile.platformName;
-  $('.workspace-limit').textContent=`${profile.platformName} 此模式请求 ${minSeconds}–${maxSeconds} 秒 · 间隔 ≥90 秒`;
+  $('.workspace-limit').textContent=`${profile.platformName} 此模式请求 ${minSeconds}–${maxSeconds} 秒 · 生成提交间隔 ${submissionGap(project.settings,profile)} 秒`;
   const opt=$('#video-model').selectedOptions[0];if(opt){opt.textContent=modelOptionLabel($('#video-model').value,batchMode?batchDefaults().mode:$('#generation-mode').value);$('#video-model').title=opt.textContent;$('#video-model-mobile-info').textContent=opt.textContent;}
   for(const [id,profileId,mode] of [['seconds',$('#video-model').value,$('#generation-mode').value],['batch-seconds',$('#video-model').value,batchDefaults().mode]]){const c=modelCapability(profileId,mode),el=$('#'+id),old=el.value,values=[];for(let n=c.minSeconds;n<=c.maxSeconds;n+=c.step)values.push(n);if(el.options.length!==values.length||[...el.options].some((o,i)=>Number(o.value)!==values[i])){el.innerHTML=values.map(n=>`<option>${n}</option>`).join('');el.value=values.includes(Number(old))?old:String(c.maxSeconds);}}
   $('.tip-card>div').innerHTML=`${h(profile.platformName)} 此模式请求 ${minSeconds}–${maxSeconds} 秒 <b>单任务串行</b>`;
@@ -61,11 +64,11 @@ function updateModelUI(){
 }
 async function updateSubmissionControls(){
   if(!project||cooldownUpdating)return;cooldownUpdating=true;
-  try{const d=defaults(),stored=await get('state','submission-cooldowns')||{},rate=await get('state','rate')||{};runner.cooldowns=stored;runner.rate=rate;const c=submissionCooldown(project,d.profileId,stored),blocked=simplified()&&c.remaining>0;
+  try{const d=defaults(),profile=modelProfile(d.profileId),stored=await get('state','submission-cooldowns')||{},rate=await get('state',pacingKey(profile.platformId||profile.id,'submit'))||{};runner.cooldowns=stored;runner.rate=rate;const c=submissionCooldown(project,d.profileId,stored),blocked=simplified()&&c.remaining>0;
     const notice=$('#submission-cooldown');notice.hidden=!blocked;notice.textContent=blocked?`${c.platformName} 提交冷却还剩 ${c.remaining} 秒；提示词和素材照常接收，点击发送后进入待提交队列。`:'';
     for(const id of ['add-jobs','pavo-submit']){$('#'+id).disabled=preparing;$('#'+id).title=blocked?'接收并排队，冷却后自动提交':'发送创作任务';}
     const current=project.jobs.find(j=>j.uid===lastPavoQueued&&['pending','deferred','submitting','unknown','queued','generating','download','checking','blocked'].includes(j.state));
-    const draft=lastPavoPrompt===$('#pavo-prompt').value.trim()&&current?current:{...d,uid:'current-draft'};const position=pendingSubmission(project,draft,runner,await get('state','submission-cooldowns')||{},await get('state','rate')||{});
+    const draft=lastPavoPrompt===$('#pavo-prompt').value.trim()&&current?current:{...d,uid:'current-draft'};const position=pendingSubmission(project,draft,runner,stored,rate);
     $('#pavo-reference-count').textContent=draft===current?`队列第 ${position.position} 位`:`将排第 ${position.position} 位`;$('#pavo-reference-count').title=position.message;
   }finally{cooldownUpdating=false;}
 }
@@ -142,7 +145,7 @@ async function mirrorAllFiles(folder){
 function guide(){const parts=[
  ['01 / 首次使用','<ol><li>用桌面版 Chrome 或 Edge 打开网页，选择本地输出文件夹并授权。</li><li>本机默认密钥会自动启用。打开“连接与密钥”可直接填入自己的 API 密钥并点击“使用新密钥”。加密保存、口令和备份在“高级模式”中。</li><li>检查连接。如跨域拦截，运行本机连接器，填入配对码并切换调用方式。</li><li>编排单镜或批量清单，检查后入队，再到任务页点击开始。</li></ol>'],
  ['02 / 素材与提示词','<p>添加素材时先显示校验清单，再逐项显示进度。素材库可多选批量优化图片或下载 ZIP；图片点击查看全图、原始尺寸与缩放。声音裁切需单独指定范围，清单原路径素材不会复制；优化合格后自动记住替代关系，新分镜与未提交分镜使用优化版，已生成历史保留。</p><p>参考图片最多5张，声音最多3段；声音总长2–12秒，单文件小于15MB。图片宽高256–5760像素，宽高比0.4–2.5。</p><p>素材库可以另存尺寸优化图和裁切声音。低清图片被放大不会恢复细节；角色身份、情节拆分、音色克隆不能靠规则修正，请用创作工具处理后再导入。</p><p>在参考模式用 <code>&lt;Picture 1&gt;</code>、<code>&lt;Audio 1&gt;</code> 按已选素材顺序标明用途。台词和动作说明分开写，避免模型朗读动作说明。</p>'],
- ['03 / 稳定批量生成','<p>请求时长遵循当前平台、模型和模式的能力配置；返回较长成片直接采用。所有认证请求至少间隔90秒，远端同时只允许一个任务在途；原片完整保存后，下一独立镜头可以继续，技术校验在后台完成。排队、限流会延长等待。保持页面与电脑唤醒；系统休眠时浏览器不能后台保证运行。</p><p>页面启动、每30秒、恢复显示及网络恢复时自动自检接续。入队成功清空本轮输入，失败保留。目录权限或密钥缺失时保留队列，必要条件恢复后接续。提交超时没有video_id时，必须在服务商控制台核实；绑定找到的编号，或确认根本没创建。严禁为赶进度盲重发。</p><p>本平台的单任务锁覆盖同一浏览器同一网站。请停止其他使用同一账户的生成程序；多个设备的RPM无法由静态网页统一约束。</p>'],
+ ['03 / 稳定批量生成','<p>请求时长遵循当前平台、模型和模式的能力配置；返回较长成片直接采用。只有生成提交默认间隔61秒，查询通常每10秒一次，完成后立即下载，远端同时只允许一个任务在途；原片完整保存后，下一独立镜头可以继续，技术校验在后台完成。正常排队不加罚；429等限流使间隔小步增加，恢复后逐步回落。保持页面与电脑唤醒；系统休眠时浏览器不能后台保证运行。</p><p>页面启动、每30秒、恢复显示及网络恢复时自动自检接续。入队成功清空本轮输入，失败保留。目录权限或密钥缺失时保留队列，必要条件恢复后接续。提交超时没有video_id时，必须在服务商控制台核实；绑定找到的编号，或确认根本没创建。严禁为赶进度盲重发。</p><p>本平台的单任务锁覆盖同一浏览器同一网站。请停止其他使用同一账户的生成程序；多个设备的RPM无法由静态网页统一约束。</p>'],
  ['04 / 校验、修订和拼接','<p>下载后检查MP4、时长、分辨率、比例、SHA-256、五点抽帧及完整解码。暗画面只是提醒，不自动当坏片。没有在此版本内置Whisper：指定台词只供人工听审和导出外部AI复核。</p><p>先重试下载或重新校验，再决定是否修订提示词重做。每次重做会产生新任务，历史文件保留。连续镜使用前镜当前版本末帧，更新前镜后需要复核后镜。</p><p>各镜技术通过后按组本地拼接MP4，统一24fps、48k音频；整集再次完整解码。单次拼接输入上限450MB；超出请分组或交给本地FFmpeg。</p>'],
  ['06 / 创作项目、素材筛选与试听','<p>“全新项目”和“项目选择”切换独立草稿与素材库，任务与成片仍显示当前制作记录的全部任务。各项目共用已选择的输出目录；镜号与拼接分组保持全局唯一。</p><p>提示词写入完整素材文件名后，点“自动关联素材库”可匹配当前有效版本；不同来源同名时改用准确路径。素材库按版本、图片/声音、校验状态和名称筛选；默认隐藏已替代原图，清空后可恢复。</p><p>声音试听、任务卡片和预览窗口同时只播放一段。播放新段自动暂停旧段，关闭预览或切换页面也会暂停。</p>'],
  ['05 / 文件和密钥','<p>本地目录含 <code>project.json</code>、<code>references/</code>、<code>raw/</code>、<code>clips/</code>、<code>checks/</code>、<code>episodes/</code>。浏览器保存工作副本，项目目录是可迁移备份。</p><p>本机默认密钥即开即用，私有配置不加入 Git 或公开网页。新密钥默认只在本次打开期间有效。需要加密保存与迁移时，展开高级模式设置口令；忘记口令需重新输入密钥。</p><p>生成需要把本镜提示词和所选参考素材发送给当前选择的视频生成平台，结果再下载到本地；不是离线模型推理。</p>'],
@@ -270,7 +273,7 @@ async function init(){
   on('#export-project','click',()=>downloadFile('project.json',JSON.stringify(redact(project),null,2)));on('#export-notes','click',async()=>{const md=reportMarkdown(project);downloadFile('X-AI_制作过程与结果.md',md,'text/markdown');if(folder&&await permitted(folder))await writeFile(folder,'X-AI_制作过程与结果.md',md);});
   on('#import-project','click',()=>{ensureIdle();if(hasUnresolved())throw Error('当前项目还有未解决的远端任务，请先处理，避免遗失在途编号。');$('#project-import').click();});
   on('#project-import','change',async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;ensureIdle();if(hasUnresolved())throw Error('请先解决原任务。');if(!folder||!await permitted(folder))throw Error('请先选择原项目所在文件夹。');if(f.size>20_000_000)throw Error('项目记录超过20MB。');const record=validateProjectFile(JSON.parse(await f.text()));if(!confirm('从此记录恢复项目？会先核对目录中的全部文件，检查通过才更新工作副本。'))return;const restored=await restoreProjectFiles(record,folder);project=restored;ensureStudios(project);await loadStudioDraft();for(const key of [...urls.keys()])clearURL(key);event('project_restored','已核对全部媒体与历史版本');await save();await renderSelected();toast('项目已恢复；请确认密钥已启用。');});
-  for(const id of ['#connection-mode','#api-origin','#request-gap'])on(id,'change',async()=>{ensureIdle();project.settings.connection=$('#connection-mode').value;project.settings.origin=$('#api-origin').value;project.settings.gap=Math.max(90,Math.min(3600,Number($('#request-gap').value)||90));$('#request-gap').value=project.settings.gap;$('#bridge-settings').hidden=project.settings.connection!=='bridge';await save();});
+  for(const id of ['#connection-mode','#api-origin','#request-gap'])on(id,'change',async()=>{ensureIdle();project.settings.connection=$('#connection-mode').value;project.settings.origin=$('#api-origin').value;project.settings.submitGap=Math.max(61,Math.min(3600,Number($('#request-gap').value)||61));$('#request-gap').value=project.settings.submitGap;$('#bridge-settings').hidden=project.settings.connection!=='bridge';await save();});
   on('#bridge-token','input',()=>{runner.transport.bridgeToken=$('#bridge-token').value.trim();});
   on('#edit-form','submit',async e=>{e.preventDefault();const j=lookup(currentEdit);ensureIdle();await runner.redo(j,$('#edit-prompt').value.trim(),$('#edit-dialogue').value.trim(),$('#edit-reason').value.trim(),{seconds:Number($('#edit-seconds').value),aspect:$('#edit-aspect').value,mode:$('#edit-mode').value,assetIds:[...$('#edit-assets').selectedOptions].map(o=>o.value),firstFrame:$('#edit-first').value||null,lastFrame:$('#edit-last').value||null});$('#edit-dialog').close();$('#detail-dialog').close();toast('新版本已保存为待提交，点击开始队列才会创建新任务。');});
   on('#video-import','change',async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;ensureIdle();const j=lookup(importTarget);await runner.acceptFile(j,f);await openDetail(j);});

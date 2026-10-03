@@ -2,7 +2,7 @@
 export const MODEL_PROFILES=[{
   id:'agnes-video-2.5-flash',platformId:'agnes',platformName:'AgnesAI',model:'agnes-video-2.5-flash',modelLabel:'Agnes Video 2.5 Flash',version:'2.5',resolution:'720P',adapter:'agnes',
   modes:{text:{minSeconds:4,maxSeconds:12,step:1},reference:{minSeconds:4,maxSeconds:12,step:1},keyframe:{minSeconds:4,maxSeconds:12,step:1}},
-  submission:{cooldownSeconds:60},
+  submission:{cooldownSeconds:61},
   references:{maxImages:5,maxAudio:3,minAudioSeconds:2,maxAudioSeconds:12},
 }];
 export const DEFAULT_PROFILE_ID=MODEL_PROFILES[0].id;

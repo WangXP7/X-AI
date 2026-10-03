@@ -49,7 +49,7 @@ export class CredentialsPanel {
     bind('#export-vault','click',()=>this.action(async()=>{const vault=await get('state','vault');if(!vault)throw Error('此浏览器还没有保存加密密钥。');downloadFile('X-AI_加密密钥备份.json',JSON.stringify(vault,null,2));this.feedback('已导出加密密钥备份。解锁口令需要另外记住。');}));
     bind('#test-connection','click',()=>this.action(async()=>{
       if(!this.transport.key)throw Error('请先启用默认密钥或填写新密钥，再检查连接。');
-      this.feedback('正在检查连接，请稍候。仍遵守至少 90 秒的请求间隔，不会创建视频。','pending');
+      this.feedback('正在检查连接，请稍候。此操作不占生成提交间隔，也不会创建视频。','pending');
       try{await this.transport.api('/v1/models');}
       catch(e){this.verified=false;throw Error(friendlyError(e)+' 可展开“高级模式 → 高级连接设置”调整调用方式。');}
       this.verified=true;this.event('connection_check','模型列表API认证成功');await this.save();this.feedback('连接成功，可以开始生成。该检查没有创建视频。','success');

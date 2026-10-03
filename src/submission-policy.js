@@ -1,10 +1,11 @@
 import {downloadSaved} from './queue-health.js';
 import {MODEL_PROFILES,modelProfile} from './models.js';
+import {pacingConfig,pacingDue,submissionGap} from './request-pacing.js';
 
 // Successful creation starts a platform-wide cooldown. Polling and downloads do not reset it.
 export function submissionCooldown(project,profileId,stored={},at=Date.now()){
   const profile=modelProfile(profileId),key=profile.platformId||profile.id;
-  const seconds=Math.max(0,Number(profile.submission?.cooldownSeconds)||0);
+  const seconds=submissionGap(project.settings,profile);
   let acceptedAt=Number(stored[key])||0;
   for(const job of project.jobs||[]){
     for(const attempt of job.attempts||[]){
@@ -21,13 +22,13 @@ export function submissionCooldown(project,profileId,stored={},at=Date.now()){
 export function cooldownMessage(c){return `${c.platformName} 已接受上一次生成；平台要求成功提交后至少间隔 ${c.seconds} 秒。还需等待 ${c.remaining} 秒，原任务继续制作。`;}
 
 export function pendingSubmission(project,job,runner={},stored={},rate={},at=Date.now()){
-  const cooldown=submissionCooldown(project,job.profileId,stored,at),gap=Math.max(90,Number(project.settings?.gap)||90)*1000;
+  const profile=modelProfile(job.profileId),cooldown=submissionCooldown(project,job.profileId,stored,at),config=pacingConfig('submit',project.settings,profile),gap=config.base;
   const ahead=[];
   for(const previous of project.jobs||[]){
     if(previous.uid===job.uid)break;
     if(!downloadSaved(previous)&&!previous.attempts?.at(-1)?.remoteReleasedAt&&['pending','submitting','unknown','queued','generating','deferred','download','checking','blocked'].includes(previous.state))ahead.push(previous);
   }
-  const until=Math.max(cooldown.until,Number(rate.last||0)+gap,Number(rate.notBefore)||0,runner.transport?.nextAt||0);
+  const until=pacingDue(rate,config,{submissionFloor:cooldown.until});
   const minimum=Math.max(0,Math.ceil((until-at)/1000));
   const remoteAhead=ahead.filter(j=>['submitting','queued','generating','unknown'].includes(j.state));
   const pendingAhead=ahead.filter(j=>['pending','deferred'].includes(j.state)).length;

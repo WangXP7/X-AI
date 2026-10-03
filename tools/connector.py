@@ -4,6 +4,7 @@ Only explicit browser origins + a random pairing token are accepted. Authenticat
 requests go to two fixed Agnes origins. CDN downloads never receive Authorization.
 """
 import argparse
+from contextlib import nullcontext
 import hashlib
 import hmac
 import ipaddress
@@ -21,7 +22,7 @@ import urllib.request
 
 ORIGINS = {'https://api.agnes-ai.cn', 'https://apihub.agnes-ai.com'}
 API_LOCK = threading.Lock()
-RATE_FILE = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'X-AI' / 'connector-rate.json'
+RATE_FILE = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'X-AI' / 'connector-submit-rate-v2.json'
 
 def local_page_origins(root=None, extra_port=None):
     root = Path(root) if root is not None else Path(__file__).resolve().parent.parent
@@ -59,7 +60,7 @@ class MediaRedirect(urllib.request.HTTPRedirectHandler):
         valid_media_url(newurl)
         return super().redirect_request(req,fp,code,msg,headers,newurl)
 
-def reserve_slot(authorization, minimum=90):
+def reserve_slot(authorization, minimum=61):
     digest = hashlib.sha256(authorization.encode()).hexdigest()
     try:
         data = json.loads(RATE_FILE.read_text(encoding='utf-8'))
@@ -89,13 +90,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods','GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers','Authorization, Content-Type, X-XAI-Token, X-XAI-Origin')
         self.send_header('Access-Control-Allow-Private-Network','true')
-        self.send_header('Access-Control-Expose-Headers','Content-Type, Content-Length')
+        self.send_header('Access-Control-Expose-Headers','Content-Type, Content-Length, Retry-After')
         self.send_header('Cache-Control','no-store')
         self.send_header('X-Content-Type-Options','nosniff')
 
-    def json_response(self,status,value):
+    def json_response(self,status,value,retry_after=None):
         raw=json.dumps(value,ensure_ascii=False).encode('utf-8')
-        self.send_response(status);self.cors();self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
+        self.send_response(status);self.cors();self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(raw)))
+        if retry_after:self.send_header('Retry-After',retry_after)
+        self.end_headers();self.wfile.write(raw)
 
     def allowed(self):
         return self.headers.get('Origin','') in self.server.allowed_origins and hmac.compare_digest(self.headers.get('X-XAI-Token',''),self.server.token)
@@ -144,8 +147,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.json_response(400,{'message':'Unsupported API route or missing authorization'});return
             body=self.read_body(50_000_000) if self.command=='POST' else None
             request=urllib.request.Request(origin+route,data=body,method=self.command,headers={'Authorization':authorization,'Content-Type':'application/json','Accept':'application/json','User-Agent':'X-AI/1.0'})
-            with API_LOCK:
-                reserve_slot(authorization)
+            with API_LOCK if self.command=='POST' else nullcontext():
+                if self.command=='POST':reserve_slot(authorization)
                 try:
                     response=urllib.request.build_opener(NoRedirect()).open(request,timeout=120)
                 except urllib.error.HTTPError as error:
@@ -153,7 +156,11 @@ class Handler(BaseHTTPRequestHandler):
                 with response:
                     raw=response.read(4_000_001)
                     if len(raw)>4_000_000:raise ValueError('API response unexpectedly large')
-                    self.send_response(response.status);self.cors();self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
+                    self.send_response(response.status);self.cors();self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(raw)))
+                    if response.headers.get('Retry-After'):self.send_header('Retry-After',response.headers['Retry-After'])
+                    self.end_headers();self.wfile.write(raw)
+        except urllib.error.HTTPError as error:
+            self.json_response(error.code,{'code':'upstream_http','upstreamStatus':error.code,'retryAfter':error.headers.get('Retry-After')},error.headers.get('Retry-After'))
         except (BrokenPipeError,ConnectionResetError):
             pass
         except Exception:

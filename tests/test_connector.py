@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import hashlib
 import json
 import os
@@ -74,5 +75,26 @@ class ConnectorTests(unittest.TestCase):
 
     def test_invalid_local_port_is_rejected(self):
         with self.assertRaises(ValueError):connector.local_page_origins(extra_port=80)
+
+    def test_queries_bypass_submission_lock_and_preserve_retry_after(self):
+        class Response(io.BytesIO):
+            status=429
+            headers={'Retry-After':'25'}
+        headers={'Origin':'https://owner.github.io','X-XAI-Token':self.server.token,'X-XAI-Origin':'https://api.agnes-ai.cn','Authorization':'Bearer synthetic'}
+        with patch.object(connector,'reserve_slot') as reserve,patch.object(connector.urllib.request,'build_opener') as opener:
+            opener.return_value.open.return_value=Response(b'{"code":"rate_limit_exceeded"}')
+            # A pending submission must not hold up an independent GET.
+            connector.API_LOCK.acquire()
+            try:
+                with self.request('/api/agnesapi?video_id=known',headers) as res:
+                    self.assertEqual(res.status,429);self.assertEqual(res.headers['Retry-After'],'25')
+            finally:connector.API_LOCK.release()
+            reserve.assert_not_called()
+
+    def test_submission_slot_is_strictly_more_than_sixty_seconds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            file=Path(directory)/'rate.json';digest=hashlib.sha256(b'Bearer synthetic').hexdigest();file.write_text(json.dumps({digest:1000}))
+            with patch.object(connector,'RATE_FILE',file),patch.object(connector.time,'time',return_value=1000),patch.object(connector.time,'sleep') as sleep:
+                connector.reserve_slot('Bearer synthetic');sleep.assert_called_once_with(61)
 
 if __name__=='__main__':unittest.main()

@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import {migrateAutomaticQueue,inspectQueue,remoteBlocks} from '../src/queue-health.js';
 import {makeProject,newJob,validateProjectFile} from '../src/core.js';
 const base={id:'S03',episode:'EP01',prompt:'4秒，小熊挥手',seconds:4,aspect:'16:9',mode:'text',assetIds:[]};
+test('download recovery backoff is not mislabeled as API rate limiting',()=>{
+ const at=Date.now(),runner={running:true,activity:{kind:'recovery',waitUntil:at+76000}};
+ const health=inspectQueue({jobs:[]},runner,at);assert.equal(health.code,'download-recovery');assert.match(health.message,/76 秒/);assert.doesNotMatch(health.message,/遵守请求间隔/);
+ runner.activity.kind='waiting';assert.equal(inspectQueue({jobs:[]},runner,at).code,'waiting');
+});
 test('old approved novice intake resumes, while expert or explicit manual tasks retain their intent',()=>{
  const p=makeProject();p.jobs=[newJob({...base,experience:'easy',creationMode:'pavo'}),newJob({...base,id:'EXPERT',experience:'expert'}),newJob({...base,id:'MANUAL',experience:'easy',autoSubmit:false})];p.events=p.jobs.map(j=>({kind:'input_approved',jobId:j.id}));
  assert.equal(migrateAutomaticQueue(p),1);assert.equal(p.jobs[0].autoSubmit,true);assert.equal(p.jobs[1].autoSubmit,undefined);assert.equal(p.jobs[2].autoSubmit,false);assert.equal(migrateAutomaticQueue(p),0);assert.equal(inspectQueue(p).canStart,true);
