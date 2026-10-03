@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ConnectionError,networkRecord,taskProblem} from '../src/network.js';
+import {ConnectionError,networkRecord,taskProblem,taskStatus} from '../src/network.js';
 import {queueProgress} from '../src/queue-progress.js';
 test('network errors identify operation without pretending fetch proved CORS',()=>{
   const e=new ConnectionError('media','direct',new TypeError('Failed to fetch'));
-  assert.match(e.message,/下载视频失败/);assert.match(e.message,/服务端已生成/);assert.match(e.message,/网络或跨域/);
+  assert.match(e.message,/下载视频失败/);assert.match(e.message,/自动恢复下载/);assert.match(e.message,/网络或跨域/);
   assert.deepEqual(Object.keys(networkRecord(e)),['at','operation','connection','code','message']);
   assert.match(new ConnectionError('submit','direct',new TypeError('fetch')).message,/不能重复提交/);
   assert.match(new ConnectionError('poll','direct',{name:'TimeoutError'}).message,/超时/);
@@ -16,4 +16,12 @@ test('completed service task blocked on download stays distinct from failed gene
   const p=queueProgress({jobs:[job]},{});assert.equal(p.stage,3);assert.equal(p.ready,0);assert.equal(p.percent,null);assert.equal(p.attention,1);assert.match(p.warning,/网页下载未完成/);
   job.attempts[0].rawBlobKey='downloaded';assert.equal(taskProblem(job).stage,4);assert.equal(taskProblem(job).downloadPending,false);
   job.state='failed';assert.equal(taskProblem(job).label,null);
+});
+
+test('submitted unknown or receipt waits are distinct from local request waiting',()=>{
+ assert.equal(taskStatus({state:'unknown',attempts:[{sentAt:'2026-10-03T10:00:00Z'}]}),'已提交 · 待返回');
+ assert.equal(taskStatus({state:'submitting',attempts:[{preparedAt:'2026-10-03T10:00:00Z'}]}),'待提交');
+ assert.equal(taskStatus({state:'submitting',attempts:[{submittedAt:'2026-10-03T10:00:00Z'}]}),'正在提交');
+ assert.equal(taskStatus({state:'submitting',attempts:[{sentAt:'2026-10-03T10:00:00Z'}]}),'已提交 · 待返回');
+ assert.equal(taskStatus({state:'queued',attempts:[{videoId:'known'}]}),'已提交 · 待返回');
 });

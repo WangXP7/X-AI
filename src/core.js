@@ -1,9 +1,10 @@
+import {remoteBlocks} from './queue-health.js';
 import {promptSpec} from './prompt-spec.js';
 import {modelProfile,modelCapability,requestDurationValid} from './models.js';
 export const MODEL = modelProfile().model;
 export const ORIGINS = ['https://api.agnes-ai.cn', 'https://apihub.agnes-ai.com'];
 export const DIMENSIONS = {'9:16':[720,1280],'16:9':[1280,704],'1:1':[720,720],'4:3':[960,720],'3:4':[720,960],'21:9':[1680,720]};
-export const LABELS = {draft:'素材待检查',invalid:'素材需处理',pending:'审核通过 · 待提交',submitting:'正在提交',unknown:'提交结果待核实',queued:'服务端排队',generating:'生成中',deferred:'退避等待',download:'待下载',checking:'本地校验中',ready:'已生成 · 待内容审核',approved:'内容审核通过',needs_redo:'不合格待处理',failed:'生成失败',blocked:'需处理后继续'};
+export const LABELS = {draft:'素材待检查',invalid:'素材需处理',pending:'待提交',submitting:'正在提交',unknown:'已提交 · 待返回',queued:'服务端排队',generating:'生成中',deferred:'退避等待',download:'待下载',checking:'本地校验中',ready:'已生成 · 待内容审核',approved:'内容审核通过',needs_redo:'不合格待处理',failed:'生成失败',blocked:'需处理后继续'};
 export const REMOTE_ACTIVE = new Set(['submitting','unknown','queued','generating','deferred','download','checking','blocked']);
 export const now = () => new Date().toISOString();
 export const uid = () => crypto.randomUUID();
@@ -102,6 +103,12 @@ export function validateProjectFile(p){
     for(const name of ['blobKey','rawBlobKey','lastFrameKey'])if(a[name]&&!key(a[name]))fail();
     for(const name of hashes)if(a[name]&&!/^[a-f0-9]{64}$/.test(a[name]))fail();
     if(a.videoId&&(typeof a.videoId!=='string'||a.videoId.length>300))fail();
+    for(const name of ['downloadCompleteAt','remoteReleasedAt'])if(a[name]!==undefined&&(typeof a[name]!=='string'||!Number.isFinite(Date.parse(a[name]))))fail();
+    if(a.remoteReleasedAt&&!a.videoId)fail();
+    for(const name of ['downloadRetryAt','downloadLinkCheckedAt'])if(a[name]!==undefined&&(!Number.isFinite(a[name])||a[name]<0))fail();
+    if(a.downloadFailures!==undefined&&(!Number.isSafeInteger(a.downloadFailures)||a.downloadFailures<0))fail();
+    for(const name of ['downloadRecovery','downloadPermanent'])if(a[name]!==undefined&&typeof a[name]!=='boolean')fail();
+    if(a.downloadUrlHistory&&(!Array.isArray(a.downloadUrlHistory)||a.downloadUrlHistory.length>5||a.downloadUrlHistory.some(v=>!v||!safeExternalURL(v.url))))fail();
     if(a.frameKeys&&(!Array.isArray(a.frameKeys)||a.frameKeys.length>5||a.frameKeys.some(k=>!key(k))))fail();
     if(a.downloadHistory){if(!Array.isArray(a.downloadHistory)||a.downloadHistory.length>100)fail();a.downloadHistory.forEach(x=>checkAttempt(x,depth+1));}
   };
@@ -113,13 +120,15 @@ export function validateProjectFile(p){
       if(s.draft!==null&&s.draft!==undefined){if(typeof s.draft!=='object'||Array.isArray(s.draft)||typeof s.draft.batchMode!=='boolean'||!s.draft.fields||typeof s.draft.fields!=='object'||Array.isArray(s.draft.fields)||Object.values(s.draft.fields).some(v=>typeof v!=='string'||v.length>10_000_000)||!Array.isArray(s.draft.selected)||!Array.isArray(s.draft.batchSelected)||[...s.draft.selected,...s.draft.batchSelected].some(id=>!p.assets.some(a=>a.id===id)))fail();if(s.draft.creationMode!==undefined&&!['single','batch','pavo'].includes(s.draft.creationMode))fail();if(s.draft.pavoSelected!==undefined&&(!Array.isArray(s.draft.pavoSelected)||s.draft.pavoSelected.some(id=>!p.assets.some(a=>a.id===id))))fail();}
     }if(!studioIDs.has(p.activeStudioId)||p.jobs.some(j=>j.studioId&&!studioIDs.has(j.studioId)))fail();
   }
+  if(p.queueControl!==undefined&&(!p.queueControl||typeof p.queueControl.paused!=='boolean'))fail();
   const ids=new Set(),uids=new Set(),assetIDs=new Set();let active=0;
   for(const j of p.jobs){if(!safeID(j.id)||!safeID(j.uid)||!safeID(j.episode)||ids.has(j.id)||uids.has(j.uid)||!Object.hasOwn(LABELS,j.state)||typeof j.prompt!=='string'||!Array.isArray(j.assetIds)||!Array.isArray(j.attempts)||!requestDurationValid(j.seconds,j.profileId,j.mode)||!DIMENSIONS[j.aspect]||!['text','reference','keyframe'].includes(j.mode))fail();ids.add(j.id);uids.add(j.uid);
+    if(j.autoSubmit!==undefined&&typeof j.autoSubmit!=='boolean')fail();
     if(j.progressKnown!==undefined&&typeof j.progressKnown!=='boolean')fail();
     if(j.textSources&&(!Array.isArray(j.textSources)||j.textSources.length>10000||j.textSources.some(s=>!s||!safeID(s.root)||!path(s.path)||!/^[a-f0-9]{64}$/.test(s.sha256)||typeof s.field!=='string'||typeof s.selection!=='string'||typeof s.encoding!=='string'||!Array.isArray(s.chain)||s.chain.length>12||s.chain.some(c=>typeof c!=='string'||c.length>2000))))fail();
     if(j.referenceReplacements&&(!Array.isArray(j.referenceReplacements)||j.referenceReplacements.length>2||j.referenceReplacements.some(r=>!r||!['prompt','dialogue'].includes(r.field)||typeof r.before!=='string'||typeof r.after!=='string')))fail();
     for(const a of [...j.attempts,...(j.current?[j.current]:[])])checkAttempt(a);
-    if(['unknown','submitting','queued','generating','download','checking'].includes(j.state)||(j.attempts.at(-1)?.videoId&&!j.attempts.at(-1).resolved&&!j.attempts.at(-1).terminalConfirmed))active++;
+    if(remoteBlocks(j)&&(['unknown','submitting','queued','generating','download','checking'].includes(j.state)||(j.attempts.at(-1)?.videoId&&!j.attempts.at(-1).resolved&&!j.attempts.at(-1).terminalConfirmed)))active++;
   }
   if(active>1)throw Error('记录中存在多个未结束的远端任务，无法安全串行恢复。请先向服务商核实任务状态。');
   for(const a of p.assets){if(!safeID(a.id)||assetIDs.has(a.id)||typeof a.name!=='string'||!['image','audio'].includes(a.kind)||!Array.isArray(a.errors)||!Number.isFinite(a.bytes)||!path(a.path)||!key(a.blobKey)||!/^[a-f0-9]{64}$/.test(a.sha256))fail();

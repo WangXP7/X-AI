@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="X-AI 1.2.1详细设计：产品、界面、架构、数据、文件、递归引用、队列、校验、恢复、部署与开发交接。">
+<meta name="description" content="X-AI 1.2.3详细设计：产品、界面、架构、数据、文件、递归引用、队列、校验、恢复、部署与开发交接。">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
-<title>X-AI 1.2.1 · 详细设计文档</title>
+<title>X-AI 1.2.3 · 详细设计文档</title>
 <style>
 *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;color:#262c3c;background:#f5f4f8;font:16px/1.85 'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif}.paper p,.paper li{overflow-wrap:anywhere}
 a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{position:fixed;inset:0 auto 0 0;width:310px;overflow:auto;padding:28px 23px;background:#f9f7fd;border-right:1px solid #e0d9ef}.reader-brand{font-size:25px;font-weight:800;letter-spacing:1px;color:#2c2546}.reader-brand small{font-size:15px;font-weight:500;display:block;letter-spacing:0;color:#746686;margin-top:4px}.reader-meta{margin:16px 0 20px;font-size:14px;line-height:1.75;color:#6b607a}.reader-nav nav{display:grid;gap:5px}.reader-nav nav a{display:block;text-decoration:none;font-size:14px;line-height:1.6;padding:6px 8px;border-radius:6px}.reader-nav nav a:hover{background:#eae3f7}.reader-nav .level-2{font-weight:650;border-top:1px solid #ebe5f2;padding-top:12px;margin-top:4px}.reader-nav .level-3{padding-left:20px;color:#6b607a}
@@ -15,7 +15,7 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 @media print{body{background:white;font-size:11pt;color:#111}.reader-nav,.document-bar,.anchor{display:none}.document{margin:0;padding:0;max-width:none}.paper{border:0;padding:0;max-width:none;box-shadow:none}h1{font-size:24pt}h2{break-before:auto;font-size:17pt}h3{font-size:13pt}h1,h2,h3{break-after:avoid}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f2f2;color:#222}pre code{white-space:pre-wrap;color:#222}.table-scroll{overflow:visible;border:0}table{min-width:0;font-size:9pt}tr{break-inside:avoid}.diagram{break-inside:avoid}details{display:none}a{color:inherit}}
 </style></head><body>
-<aside class="reader-nav"><div class="reader-brand">X-AI <small>详细设计文档 · 1.2.1</small></div><p class="reader-meta">基准：2026-10-03 · 北京时间<br>实现、验证与扩展分别说明<br>正文约 79,527 字符 · 36 章</p><nav aria-label="文档目录"><a class="level-2" href="#section-2">0. 阅读方式、状态标记与依据</a>
+<aside class="reader-nav"><div class="reader-brand">X-AI <small>详细设计文档 · 1.2.3</small></div><p class="reader-meta">基准：2026-10-03 · 北京时间<br>实现、验证与扩展分别说明<br>正文约 88,114 字符 · 38 章</p><nav aria-label="文档目录"><a class="level-2" href="#section-2">0. 阅读方式、状态标记与依据</a>
 <a class="level-3" href="#section-3">0.1 阅读路径</a>
 <a class="level-3" href="#section-4">0.2 文档用语</a>
 <a class="level-3" href="#section-5">0.3 依据与冲突处理</a>
@@ -204,17 +204,35 @@ a{color:#5d47a8;text-underline-offset:3px}a:hover{color:#38257a}.reader-nav{posi
 <a class="level-3" href="#section-188">35.2 模式选择、草稿与目录授权</a>
 <a class="level-3" href="#section-189">35.3 Pavo默认参数与设置收起</a>
 <a class="level-3" href="#section-190">35.4 成功提交后的60秒冷却与数据规则</a>
-<a class="level-3" href="#section-191">35.5 实现入口与验收要求</a></nav></aside>
-<main class="document"><div class="document-bar"><span>可直接双击阅读 · 无脚本 / 无联网依赖</span><a href="./X-AI详细设计文档.md" download>下载 Markdown 源文档</a><a href="../README.md">项目使用说明</a><span>可用浏览器 Ctrl+P 打印</span></div><article class="paper"><h1 id="section-1">X-AI 1.2.1 详细设计文档<a class="anchor" href="#section-1" aria-label="链接到本节">#</a></h1>
+<a class="level-3" href="#section-191">35.5 实现入口与验收要求</a>
+<a class="level-2" href="#section-192">36. 1.2.2 冷却期入队、真实状态与自动下载恢复（2026-10-03）</a>
+<a class="level-3" href="#section-193">36.1 版本关系与目标</a>
+<a class="level-3" href="#section-194">36.2 冷却期仍完整接收下一镜</a>
+<a class="level-3" href="#section-195">36.3 待提交估算与队列位置</a>
+<a class="level-3" href="#section-196">36.4 已发出、已受理与真正提交中</a>
+<a class="level-3" href="#section-197">36.5 Pavo发送入口与模型扩展占位</a>
+<a class="level-3" href="#section-198">36.6 S02实测证据与缺陷定位</a>
+<a class="level-3" href="#section-199">36.7 自动下载通道和单轮恢复</a>
+<a class="level-3" href="#section-200">36.8 持久化恢复、断网和链接刷新</a>
+<a class="level-3" href="#section-201">36.9 验收场景与交接要求</a>
+<a class="level-2" href="#section-202">37. 版本1.2.3新增：队列自检、后台技术校验与入队清空（2026-10-03）</a>
+<a class="level-3" href="#section-203">37.1 现场S03：输入已经接收，自动调度意图缺失</a>
+<a class="level-3" href="#section-204">37.2 内部轮询与唤醒机制</a>
+<a class="level-3" href="#section-205">37.3 等待原因与自动动作</a>
+<a class="level-3" href="#section-206">37.4 原片保存与本地技术校验分离</a>
+<a class="level-3" href="#section-207">37.5 入队成功即清空当前创作输入</a>
+<a class="level-3" href="#section-208">37.6 并发与状态一致性</a>
+<a class="level-3" href="#section-209">37.7 开发验收与本轮证据</a></nav></aside>
+<main class="document"><div class="document-bar"><span>可直接双击阅读 · 无脚本 / 无联网依赖</span><a href="./X-AI详细设计文档.md" download>下载 Markdown 源文档</a><a href="../README.md">项目使用说明</a><span>可用浏览器 Ctrl+P 打印</span></div><article class="paper"><h1 id="section-1">X-AI 1.2.3 详细设计文档<a class="anchor" href="#section-1" aria-label="链接到本节">#</a></h1>
 <blockquote>
 <p>产品：X-AI · 本地视频创作台<br>
-版本沿革：1.0 原设计；1.1 同名素材、自动关联、筛选与创作项目；1.1.1 单段互斥试听 / 试看；1.1.2 本地启动与连接恢复；1.1.3 原素材只引用与文件状态恢复；1.1.4 目录写入重试与批量映射保存；1.1.5 任务刷新与动态进度；1.1.6 紧凑进度与媒体下载恢复；1.2.0 小白版 / 专家版、PavoAI与动态平台能力；1.2.1 顶栏版本切换、极简默认入口、Pavo默认参数与成功提交冷却。新增与变更详见第 27—35 章。<br>
+版本沿革：1.0 原设计；1.1 同名素材、自动关联、筛选与创作项目；1.1.1 单段互斥试听 / 试看；1.1.2 本地启动与连接恢复；1.1.3 原素材只引用与文件状态恢复；1.1.4 目录写入重试与批量映射保存；1.1.5 任务刷新与动态进度；1.1.6 紧凑进度与媒体下载恢复；1.2.0 小白版 / 专家版、PavoAI与动态平台能力；1.2.1 顶栏版本切换、极简默认入口、Pavo默认参数与成功提交冷却。1.2.2 冷却入队、真实提交状态、队列位置与自动下载恢复。新增与变更详见第 27—36 章。<br>
 文档基准日期：2026-10-03（北京时间）<br>
 代码目录：<code>D:\PRIVACY-REDACTED\REDACTED-DIR</code><br>
 面向读者：产品负责人、普通使用者、前端开发者、音视频开发者、测试人员及接手开发的 AI。<br>
 文档性质：当前实现说明 + 设计约束 + 扩展方案。不是服务商永久规格承诺，也不是历史视频生产已全部完成的证明。</p>
 </blockquote>
-<p>当前文档正文按 <strong>1.2.1</strong> 实际实现维护。第 27 章单独记录 <strong>1.1</strong> 新增与变更，第 28 章记录 <strong>1.1.1</strong> 播放补充，第 29 章记录 <strong>1.1.2</strong> 启动修复，第 30 章记录 <strong>1.1.3</strong> 素材导入修复，第 31 章记录 <strong>1.1.4</strong> 目录写入修复，第 32 章记录 <strong>1.1.5</strong> 队列刷新与进度，第 33 章记录 <strong>1.1.6</strong> 紧凑布局与下载故障恢复，第34章记录 <strong>1.2.0</strong> 简化操作与平台能力，第35章记录 <strong>1.2.1</strong> 极简工作台与提交交互；历史验证保留原日期和版本，不能当成新功能的验证结果。</p>
+<p>当前文档正文按 <strong>1.2.1</strong> 实际实现维护。第 27 章单独记录 <strong>1.1</strong> 新增与变更，第 28 章记录 <strong>1.1.1</strong> 播放补充，第 29 章记录 <strong>1.1.2</strong> 启动修复，第 30 章记录 <strong>1.1.3</strong> 素材导入修复，第 31 章记录 <strong>1.1.4</strong> 目录写入修复，第 32 章记录 <strong>1.1.5</strong> 队列刷新与进度，第 33 章记录 <strong>1.1.6</strong> 紧凑布局与下载故障恢复，第34章记录 <strong>1.2.0</strong> 简化操作与平台能力，第35章记录 <strong>1.2.1</strong> 极简工作台与提交交互，第36章记录 <strong>1.2.2</strong> 自动排队和下载恢复；历史验证保留原日期和版本，不能当成新功能的验证结果。</p>
 <h2 id="section-2">0. 阅读方式、状态标记与依据<a class="anchor" href="#section-2" aria-label="链接到本节">#</a></h2>
 <h3 id="section-3">0.1 阅读路径<a class="anchor" href="#section-3" aria-label="链接到本节">#</a></h3>
 <div class="table-scroll"><table>
@@ -3255,5 +3273,210 @@ node tools/build-design-doc.mjs</code></pre></div>
 </tbody></table>
 </div>
 <p>测试只能使用隔离浏览器数据、合成密钥和受控接口，不能为验收重复提交用户测试镜头。实际运行结果另记docs/验证记录.md；设计验收要求不等于已完成的运行证据。Markdown为源，HTML由tools/build-design-doc.mjs重建。</p>
+<h2 id="section-192">36. 1.2.2 冷却期入队、真实状态与自动下载恢复（2026-10-03）<a class="anchor" href="#section-192" aria-label="链接到本节">#</a></h2>
+<h3 id="section-193">36.1 版本关系与目标<a class="anchor" href="#section-193" aria-label="链接到本节">#</a></h3>
+<p>本章替代35.4中“冷却期禁止接收新任务”的交互规则，并补齐33章只处理初始fetch失败、需要用户手动恢复下载的流程。1.2.1及以前章节保留历史事实，当前产品和入口资源为1.2.2。目标是用户完成提示词及必要素材输入后，程序承担排队、提交、查询、下载恢复和技术校验。技术通过仍不等于剧情与声音内容已审核通过。</p>
+<h3 id="section-194">36.2 冷却期仍完整接收下一镜<a class="anchor" href="#section-194" aria-label="链接到本节">#</a></h3>
+<p>Pavo与小白版点击生成后，先执行原有递归提示词读取、明确时长解析、素材格式检查、必要同名优化及引用关系校验，再将本轮Job保存到浏览器与已授权输出目录。即使前一任务仍在生成，或平台成功冷却未结束，也不拒收新镜；提示词和素材上传正常进行。队列中新镜为pending，中文“待提交”。新镜带autoSubmit=true，序号和输入快照保留。专家草稿不会因为小白版新镜加入而自动提交；专家仍可自行开始队列。</p>
+<p>认证请求执行时间同时受平台成功冷却、每次认证HTTP至少90秒、429退避与前序任务约束。当前Agnes成功受理后冷却60秒；60秒不是所有平台的固定上限，也不替代原90秒规则。下一镜真正POST必须等前序任务处理完成，并满足实际请求截止时间；单任务串行策略不变。只等待冷却时不新增收费尝试，不提前显示“正在提交”。前序未知提交仍保护原尝试，禁止自动重发。</p>
+<h3 id="section-195">36.3 待提交估算与队列位置<a class="anchor" href="#section-195" aria-label="链接到本节">#</a></h3>
+<p>src/submission-policy.js的pendingSubmission统一用于任务卡和Pavo入口。位置由当前队列中的未完成任务顺序计算：正在处理为第1位，其后新镜为第2位；当前草稿未入队时显示“将排第X位”，刚入队且草稿相同显示“队列第X位”。已就绪、批准、已确认终止任务不计入。此数值替代原素材数量“✦6”，素材仍在各自的标签中显示。</p>
+<p>预计等待先取成功冷却截止、rate.last+真实gap、rate.notBefore及Transport.nextAt最大值，再考虑前方待提交镜的最小请求间隔。服务端不提供可靠完成时间，因此前序生成/下载尚未结束时显示“预计等待X秒起，前序任务结束后提交”；不能假称X秒必定生成完毕。仅时间约束时显示“预计等待X秒后提交”。每秒更新，等待阶段使用不确定进度条，整体百分比只按真实已就绪镜数计算。</p>
+<h3 id="section-196">36.4 已发出、已受理与真正提交中<a class="anchor" href="#section-196" aria-label="链接到本节">#</a></h3>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>记录情况</th>
+<th>中文显示</th>
+<th>自动行为</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>输入已接收，正在校验/等待POST间隔</td>
+<td>待提交</td>
+<td>到期且前序允许后发出</td>
+</tr>
+<tr>
+<td>开始真正发送，尚无sentAt记录</td>
+<td>正在提交</td>
+<td>等待本次响应</td>
+</tr>
+<tr>
+<td>请求已发出，尚未确认结果</td>
+<td>已提交 · 待返回</td>
+<td>保留原请求，不盲重发</td>
+</tr>
+<tr>
+<td>收到video_id，但尚无首次查询结果</td>
+<td>已提交 · 待返回</td>
+<td>查询原video_id</td>
+</tr>
+<tr>
+<td>查询明确queued</td>
+<td>服务端排队</td>
+<td>按退避继续查询</td>
+</tr>
+<tr>
+<td>查询明确generating</td>
+<td>生成中</td>
+<td>展示真实服务端进度</td>
+</tr>
+<tr>
+<td>服务端明确429拒绝创建</td>
+<td>待提交</td>
+<td>按原安全退避重试</td>
+</tr>
+<tr>
+<td>完成且下载暂时中断</td>
+<td>已生成 · 自动下载中</td>
+<td>自动恢复原视频</td>
+</tr>
+</tbody></table>
+</div>
+<p>Transport.api在真正HTTP发送之前才调用beforeSend。准备阶段保存preparedAt及输入快照，保持pending；真实发送前保存submittedAt检查点，发出时设置sentAt。页面中断恢复以原video_id和检查点为准。unknown内部状态仍保留计费保护，中文名称调整不等于授权重发。</p>
+<h3 id="section-197">36.5 Pavo发送入口与模型扩展占位<a class="anchor" href="#section-197" aria-label="链接到本节">#</a></h3>
+<p>发送按钮使用与全站一致的SVG线条图标，圆角箭头、适度圆形绿色底、悬停及键盘焦点反馈；保留可访问名称和忙碌禁用状态。冷却只给说明，发送入口用于接收入队，不再锁死输入流程。默认16:9 / 12s / 720p及提示词时长优先保持。</p>
+<p>专家和Pavo模型选择增加“MiniMax H3 本地化部署(待接入)”和“X-AI（即将发布）”。UPCOMING_MODELS只提供可见禁用选项；这些模型没有生产适配器和能力配置，不能发出伪造的Agnes请求，也不能声明已经可用。实际平台名称、分辨率、模式限制和冷却仍来自真实MODEL_PROFILES。</p>
+<h3 id="section-198">36.6 S02实测证据与缺陷定位<a class="anchor" href="#section-198" aria-label="链接到本节">#</a></h3>
+<p>现场S02已收到原video_id，查询结果completed / progress100；最后问题是media / direct / fetch_unreadable，没有rawPath及当前成片。原实现只在fetch获取响应阶段捕获TypeError并尝试本机通道，response.body读取和后续blob失败不在回退保护内；取得响应后流中断仍会被直接记为blocked，要求用户操作。Fetch本身无法证明究竟是跨域、断网、代理还是数据流中断，不能仅凭报错断言唯一网络原因。</p>
+<p>本轮同源本机通道真实读取S02原视频4,424,757字节，SHA-256为05ea2f5c70b2fa34814fbd197d1b8c1ba65c488b7d89086df2405c38688317fd。该读取仅访问原公开视频地址，没有创建新任务，证明下载阶段可以由程序接管；实际媒体核验为12.256秒、1280×720、24fps、有音轨，完整解码passed、technical passed，超过12秒直接采用；S02原记录已备份，补回视频和抽帧核验，318项素材、映射及其它任务保持。人工内容审核仍为pending。</p>
+<h3 id="section-199">36.7 自动下载通道和单轮恢复<a class="anchor" href="#section-199" aria-label="链接到本节">#</a></h3>
+<p>本机HTTP页面遇当前Agnes固定输出CDN，优先同源/__xai_media。已经配置并配对的连接器作为附加通道，最后尝试直接HTTPS；不要求用户新增配对或选通道。每轮最多3次通道组合，轮间2秒、4秒；完整fetch、HTTP状态、Content-Type、Content-Length、reader.read、超时、空流和不完整响应都在同一错误处理范围内。失败reader取消并释放，部分字节全部丢弃，从零下载；不混合不同请求或签名链接的内容。</p>
+<p>只允许无内嵌凭据的HTTPS链接。自动本机媒体通道仅代理固定Agnes输出CDN的/videos/*.mp4，不接受用户密钥/Cookie，不代理收费创建API；请求来源必须精确匹配本机页面。重定向逐次核验地址，按已配置HTTPS系统代理连接该固定公共CDN，避免将代理fake-IP误判为目标公网地址。单文件512MB安全预算仍保留。超过安全预算或无效/越权地址明确停止，不伪装成已完成。</p>
+<p>本机上游403等通过受限JSON返回upstreamStatus，浏览器得以辨别链接失效；网络故障返回upstream_unavailable，不泄露凭据。上游中断或字节不足关闭响应，客户端检查真实接收长度。application/octet-stream允许进入后续实际媒体校验，HTML/JSON响应不当作视频。浏览器同时检查MP4签名和最小大小；看似完整但实际不能解码的下载也自动丢弃缓存并重新读取原链接，保存/权限或画幅不合要求不能被误判为网络重试成功。</p>
+<h3 id="section-200">36.8 持久化恢复、断网和链接刷新<a class="anchor" href="#section-200" aria-label="链接到本节">#</a></h3>
+<p>单轮下载失败不再变成网络blocked：保持download，error=null，downloadRecovery=true，保存downloadFailures、downloadRetryAt、最后20条downloadErrors与lastProblem。每轮延迟15 / 30 / 60 / 120 / 240秒，随后上限300秒，避免重试风暴；网络恢复后持续自动尝试。界面显示“正在自动恢复下载”和真实重试倒计时，不提示用户手动下载或选择连接器。离线时等待online事件，1秒检查一次，恢复后自动继续。</p>
+<p>403/404/410等可能失效链接，或两轮以上持续失败时，若已有启用密钥，则按原认证节流GET查询原video_id获取最新地址。链接查询至少间隔5分钟；新地址替换运行地址并记录最近5条downloadUrlHistory，立即尝试下载；相同地址不重新创建任务。查询也失败则保留原地址、查询诊断和重试检查点，继续自动网络恢复。</p>
+<p>重开页面且目录权限有效时，遗留“已生成但media失败”的blocked迁移到download；检查点中的下载也自动恢复。优先读取并核验已缓存/已保存原视频，避免重下载；不存在或SHA不符再取原链接。真实磁盘写入/解码失败走已有本地错误机制，不能通过网络重试冒充通过。浏览器关闭期间不执行浏览器队列，重新打开后恢复；系统权限撤销、空间耗尽、服务商永久删除文件等外部状态无法由静态页面凭空修复，应如实保留证据，不能自动重复付费生成。</p>
+<h3 id="section-201">36.9 验收场景与交接要求<a class="anchor" href="#section-201" aria-label="链接到本节">#</a></h3>
+<p>专项测试必须验证：冷却期间接收下一镜提示词和原素材且POST数量不增；前序处理及实际间隔完成后自动提交，attempt仅一条；受理状态正确，队列序号正确；流中断加直接CORS失败后自动重取且SHA一致；失效链接只GET原任务，更新链接后完整解码通过；暂时失败保持download且重试时间落盘；安全拒绝不会无限高速重试；重开可恢复且原编号不变。模型占位不可请求，返回超过12秒原片仍直接采用。实际执行结果及证据见对应版本验证记录，不把历史检查冒充本轮运行。</p>
+<h2 id="section-202">37. 版本1.2.3新增：队列自检、后台技术校验与入队清空（2026-10-03）<a class="anchor" href="#section-202" aria-label="链接到本节">#</a></h2>
+<p>本章记录1.2.3的新增行为，补充第36章。版本1.2.2及更早章节保留为历史；本章关于“下载落盘释放远端队列”和“入队后清空创作输入”的规则优先。目标是让用户输入提示词、提供必要素材后，程序持续完成已授权流程，并能解释真实等待原因。</p>
+<h3 id="section-203">37.1 现场S03：输入已经接收，自动调度意图缺失<a class="anchor" href="#section-203" aria-label="链接到本节">#</a></h3>
+<p>核对用户指定X-AI-test/project.json：S01、S02已经技术就绪；S03为pending，experience=easy、creationMode=pavo，事件中已有input_approved，attempts为空，current为空，没有video_id，也没有提交时间。S03并未向服务端创建任务。“审核通过 · 待提交”来自旧版界面，只表示输入检查通过，不能解释为视频内容审核通过，也不能证明请求已经发出。</p>
+<p>旧自动启动逻辑仅查找autoSubmit=true的记录。该S03的autoSubmit字段缺失，因此重新打开页面或前序下载完成，都不能触发后续提交。这是已定位的调度兼容缺陷。同时，旧运行循环将下载、完整解码、抽帧及派生文件保存都串在一个步骤内，即使原片已经下载，后续独立镜头也须等全部本地处理结束。本轮分别修复这两处问题。</p>
+<p>迁移条件必须同时满足：字段未定义；内部状态pending；小白版或Pavo创作；存在匹配镜号的input_approved事件；不存在已发出的未解决尝试或video_id。只补autoSubmit=true，保留镜号、提示词、素材ID、时长、画幅、尝试记录、已生成视频和审核记录。明确autoSubmit=false的任务、专家手动草稿及未知提交不被迁移；迁移幂等，同一任务只补一次。该次迁移中，只有同创作项目的Pavo草稿正文及素材ID与已入队任务完全一致时才清空旧草稿；用户已经改写的下一镜不清。迁移产生queue_migrated事件并保存检查点。</p>
+<h3 id="section-204">37.2 内部轮询与唤醒机制<a class="anchor" href="#section-204" aria-label="链接到本节">#</a></h3>
+<p>新增src/queue-health.js负责纯状态判断，src/queue-watchdog.js负责检查、迁移、检查点保存及调度唤醒。页面初始化完成后立即自检；正常每30秒检查一次；页面重新显示、可见性变化、网络online时额外唤醒。进度和倒计时仍每秒更新，自检不会每秒重建视频播放器，也不会把30秒检查等同于30秒调用服务商API。</p>
+<p>单个自检实例通过busy标记合并并发检查。接收新镜、素材处理、连接目录、调度器启动、状态刷新及本地拼接期间不抢操作；结束后下一次检查接续。停止的调度器在确有恢复工作、目录权限有效、必要密钥已启用且网络在线时才启动。启动尝试最短间隔10秒，原生产锁和认证HTTP锁保持，避免重复点击、重复唤醒造成同页重复创建。所有实际API请求继续遵守能力配置中的成功冷却、认证间隔及安全退避。</p>
+<p>健康状态保存当前检测时间、原因码、中文说明。检测时间通过进度区提示可查询，说明在“全部任务”右侧紧凑展示。该时间是自检时刻，不能充当服务端响应时间。服务端最新响应、当前步骤、请求倒计时、下载字节及媒体引擎进度保留各自来源。</p>
+<h3 id="section-205">37.3 等待原因与自动动作<a class="anchor" href="#section-205" aria-label="链接到本节">#</a></h3>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>自检发现</th>
+<th>展示含义</th>
+<th>程序行为</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>空闲且有自动提交任务</td>
+<td>正在自动接续某镜</td>
+<td>取得原生产锁，按请求间隔提交</td>
+</tr>
+<tr>
+<td>旧版小白/Pavo输入已通过但字段缺失</td>
+<td>自动提交意图迁移</td>
+<td>补字段、保存，随后接续</td>
+</tr>
+<tr>
+<td>已知原video_id但状态陈旧</td>
+<td>正在恢复原任务处理</td>
+<td>查询原ID，不创建新任务</td>
+</tr>
+<tr>
+<td>原片已落盘但检查未完成</td>
+<td>恢复后台技术校验</td>
+<td>读缓存或磁盘并核对，不重复生成</td>
+</tr>
+<tr>
+<td>临时下载失败</td>
+<td>自动恢复原片下载</td>
+<td>沿用1.2.2的通道回退、退避和链接刷新</td>
+</tr>
+<tr>
+<td>请求间隔尚未到期</td>
+<td>还有真实x秒后继续</td>
+<td>等待实际notBefore/nextAt，不绕过节流</td>
+</tr>
+<tr>
+<td>用户暂停新提交</td>
+<td>已暂停，当前任务仍继续</td>
+<td>保留queueControl.paused；恢复按钮才解除</td>
+</tr>
+<tr>
+<td>专家任务尚未开始</td>
+<td>专家任务等待开始</td>
+<td>保持人工开始意图，不由自检代提交</td>
+</tr>
+<tr>
+<td>依赖上一镜末帧</td>
+<td>等待指定镜头技术校验和末帧</td>
+<td>依赖满足后接续，不使用未经校验的末帧</td>
+</tr>
+<tr>
+<td>网络离线</td>
+<td>网络恢复后继续</td>
+<td>等待online，保留队列及下载检查点</td>
+</tr>
+<tr>
+<td>输出权限缺失或密钥未启用</td>
+<td>原任务保留，等待必要条件</td>
+<td>不丢输入，不虚假提交；条件满足后检查接续</td>
+</tr>
+<tr>
+<td>未知POST、未拿到video_id</td>
+<td>提交回执尚未确认</td>
+<td>保留原请求，防止重复收费生成</td>
+</tr>
+<tr>
+<td>正在处理步骤超过45秒未更新活动</td>
+<td>步骤已等待x秒，超时保护仍在运行</td>
+<td>解释真实等待；不强行并发重发请求</td>
+</tr>
+</tbody></table>
+</div>
+<p>HTTP请求和下载沿用180秒超时；媒体引擎沿用自己的超时保护。自检不会凭等待长就宣称服务端失败，也不会终止一个仍在执行的POST后再发一遍。可安全重启的是已经停止、且存在可恢复原检查点的调度器。静态页面关闭、浏览器挂起或系统休眠期间不承诺执行；重新打开且权限有效后接续。</p>
+<h3 id="section-206">37.4 原片保存与本地技术校验分离<a class="anchor" href="#section-206" aria-label="链接到本节">#</a></h3>
+<p>下载流程先完成完整响应读取、长度/类型/MP4签名等基础检查，随后计算SHA-256、保存浏览器原始字节、写入raw路径并通过已有写入回读核对，再保存project.json检查点。只有该原片持久化阶段成功，才记录downloadCompleteAt；有video_id时同时记录remoteReleasedAt。文件未完整下载、哈希不符、原片或检查点保存失败，均不能提前释放远端槽位。</p>
+<p>持久化成功后，任务显示“已下载 · 后台校验中”，进入checking。Runner.localChecks以uid去重，后台完成元数据、完整解码、抽帧、末帧和clips/checks派生文件保存。主调度器可以处理下一独立镜头；实际下一次POST仍受冷却和认证间隔限制。技术通过进入ready、内容审核pending；内容审核不占远端生成队列。</p>
+<p>remoteReleasedAt用于说明原服务端任务已结束并且原片曾成功保存；本地校验发现坏下载后，原片缓存与downloadCompleteAt失效，程序自动重取原地址。远端已释放事实保留，不因此把结束的任务重新认作正在服务端生成，也不阻塞已经在执行的下一独立镜头。重取及后台处理按uid去重，不创建新video_id。真实画幅错误等不等于网络故障，不通过无休止重下载伪装通过。</p>
+<p>continuityFrom依赖的镜头必须等上一镜technical通过并生成lastFrameKey后才能创建。普通独立镜头无此依赖。人工内容审核始终独立，既不自动通过，也不要求用户先审完前片才生成后片。恢复记录校验允许“已保存原片的本地检查 + 一个未结束远端任务”，仍拒绝多个未结束远端创建记录。新增时间字段校验为有效日期，remoteReleasedAt须对应video_id。</p>
+<h3 id="section-207">37.5 入队成功即清空当前创作输入<a class="anchor" href="#section-207" aria-label="链接到本节">#</a></h3>
+<p>触发点为创建Job输入快照、输入验证通过并成功保存队列记录之后。无需等平台受理、无需等60秒冷却结束、无需等视频返回。用户点击生成后，任务卡片和“Sxx已进入队列；输入框已准备好下一镜”反馈确认接收；冷却期入队同样清空，并在任务页显示待提交及等待说明。</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>创作区</th>
+<th>入队成功清空</th>
+<th>继续保留</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Pavo</td>
+<td>提示词、已选素材chips、上次输入对应的提交位置缓存</td>
+<td>平台/模型、生成方式、画幅、请求时长、分辨率</td>
+</tr>
+<tr>
+<td>单段</td>
+<td>提示词、对白、随机种子、当前参考素材、首末帧选择、字数显示</td>
+<td>平台/模型、生成方式、画幅、时长、分组；镜号准备下一未使用编号</td>
+</tr>
+<tr>
+<td>批量</td>
+<td>清单正文、共用素材选择、当前清单载入/分析显示及解析缓存</td>
+<td>批量默认参数、镜号前缀、全局任务与素材库</td>
+</tr>
+</tbody></table>
+</div>
+<p>仅清空本轮所在创作区，其它模式的独立草稿不变。清空会保存为创作项目的新草稿，刷新后不会恢复刚提交的同一段内容。不会删除素材库中的资产、原文件、优化文件，也不会移除Job.assetIds、提示词、来源链、输入哈希或历史尝试。后续优化仍遵守已提交历史引用不追改的既有规则。</p>
+<p>新镜号先计算再保存草稿，避免界面已经到S04而磁盘仍记录S03。入队校验失败、权限不足、未启用密钥或队列检查点保存失败，均保留创作输入及所选素材。队列保存失败时回滚新增Job/事件并尝试恢复原记录，不能留下自动提交的新任务。队列已成功保存而后续空草稿目录同步失败，反馈应明确“任务已入队”，不能谎报创建失败诱导重复提交。</p>
+<h3 id="section-208">37.6 并发与状态一致性<a class="anchor" href="#section-208" aria-label="链接到本节">#</a></h3>
+<p>自检不在preparing期间迁移或启动刚追加但未完成保存的任务。Runner.starting防止异步权限检查期间重复启动；运行中的新增自动任务由同一调度器接收。生产调度继续使用x-ai-production-runner锁，收费认证HTTP继续使用x-ai-auth-http锁。后台文件保存沿用已有全局写入串行与project保存串行，不让两个写流同时覆盖同一路径。</p>
+<p>输入清空与Job采用独立数据：清空DOM和草稿数组不会影响已入队的文本和素材ID数组。重新准备下一镜可与前序生成并行；重建整个制作记录、导入项目、修订在途任务及拼接等仍须等待生产或后台检查释放。跨窗口独立工作副本的实时合并仍不在本版实现范围；生产锁解决同源并行调度，不能替代完整跨窗口数据同步。</p>
+<p>暂停意图写入project.queueControl，刷新、旧记录迁移和自动唤醒不解除。已知video_id优先于陈旧pending/submitting标签，只恢复原任务；有submittedAt却没有video_id的pending也按未知回执保护，不自动再POST。</p>
+<h3 id="section-209">37.7 开发验收与本轮证据<a class="anchor" href="#section-209" aria-label="链接到本节">#</a></h3>
+<p>新增纯函数测试验证旧任务迁移幂等、专家/显式手动保留、暂停保留、未知POST保护、末帧依赖、已保存原片释放远端槽位、陈旧本地恢复和项目多远端记录拒绝。新增watchdog-browser.mjs使用隔离浏览器、合成密钥与本地视频；真实平台网络被拦截，验证旧小白任务只产生一次合成POST、暂停不提交、解除后接续；控制第一镜技术检查等待，证明第二镜在其checking阶段已提交；实际创作区入队后提示词/素材chips为空而Job快照完整，参数不变；无效输入和模拟磁盘写入失败保留输入，队列不增加。</p>
+<p>媒体测试继续验证完整解码、按实际返回时长采用、MP4原文件保留和派生文件核验。真实现场记录与合成浏览器测试分别记录；只恢复autoSubmit不等于已经发出服务端创建请求。执行结果和证据路径见docs/验证记录.md本版本章节，不将历史通过计入本轮。</p>
 <footer class="reader-footer">本文由同目录 Markdown 生成。以当前源码和用户最新要求核对；未实现功能与未执行检查不得冒充完成。® YiQiXP</footer></article></main>
 </body></html>

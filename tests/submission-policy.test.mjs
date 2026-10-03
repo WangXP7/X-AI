@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {MODEL_PROFILES,DEFAULT_PROFILE_ID} from '../src/models.js';
-import {submissionCooldown} from '../src/submission-policy.js';
+import {submissionCooldown,pendingSubmission} from '../src/submission-policy.js';
 const accepted=Date.parse('2026-10-03T08:00:00Z');
 const job={profileId:DEFAULT_PROFILE_ID,attempts:[{videoId:'synthetic',acceptedAt:new Date(accepted).toISOString(),submittedAt:new Date(accepted-5000).toISOString(),polledAt:new Date(accepted+50000).toISOString()}]};
 test('successful platform receipt starts exact 60s window; polls do not reset it',()=>{
@@ -16,4 +16,11 @@ test('persisted cooldown survives project change; another platform keeps its own
 test('legacy accepted task uses submittedAt; latest same-platform model receipt wins',()=>{
  const p={jobs:[{attempts:[{videoId:'old',submittedAt:new Date(accepted).toISOString(),request:{model:MODEL_PROFILES[0].model}}]}]};assert.equal(submissionCooldown(p,DEFAULT_PROFILE_ID,{},accepted+1000).remaining,59);
  p.jobs.push(job);assert.equal(submissionCooldown(p,DEFAULT_PROFILE_ID,{agnes:accepted+5000},accepted+10000).remaining,55);
+});
+
+test('queue estimate uses cooldown, real rate delay and earlier jobs without fake finish times',()=>{
+ const target={uid:'next',profileId:DEFAULT_PROFILE_ID,state:'pending'},p={settings:{gap:90},jobs:[{uid:'first',state:'generating'},target]};
+ const wait=pendingSubmission(p,target,{}, {agnes:accepted},{last:accepted,notBefore:accepted+200000},accepted+10000);
+ assert.equal(wait.position,2);assert.equal(wait.remaining,190);assert.equal(wait.uncertain,true);assert.match(wait.message,/预计等待 190 秒起/);
+ assert.equal(pendingSubmission({settings:{gap:90},jobs:[target]},target,{}, {agnes:accepted},{},accepted+60000).remaining,0);
 });

@@ -10,3 +10,6 @@ export function modelProfile(id=DEFAULT_PROFILE_ID){const profile=MODEL_PROFILES
 export function modelCapability(profileId,mode='reference'){const profile=modelProfile(profileId),limits=profile.modes[mode];if(!limits)throw Error(`${profile.platformName} 的 ${profile.modelLabel} 不支持此生成模式。`);return {...limits,profile};}
 export function modelOptionLabel(profileId,mode='reference'){const {profile,maxSeconds}=modelCapability(profileId,mode);return `${profile.platformName} · ${profile.modelLabel} · ${profile.resolution} · 此模式请求最长 ${maxSeconds} 秒`;}
 export function requestDurationValid(seconds,profileId,mode){const c=modelCapability(profileId,mode);return Number.isFinite(Number(seconds))&&Number(seconds)>=c.minSeconds&&Number(seconds)<=c.maxSeconds&&Math.abs((Number(seconds)-c.minSeconds)/c.step-Math.round((Number(seconds)-c.minSeconds)/c.step))<1e-7;}
+
+// Visible roadmap choices have no adapter and cannot become a paid API request.
+export const UPCOMING_MODELS=[{id:'minimax-h3-local',label:'MiniMax H3 本地化部署(待接入)'},{id:'x-ai-upcoming',label:'X-AI（即将发布）'}];

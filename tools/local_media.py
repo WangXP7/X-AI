@@ -2,6 +2,7 @@
 import json
 import urllib.parse
 import urllib.request
+import urllib.error
 from connector import valid_media_url
 
 MAX_MEDIA = 512_000_000
@@ -39,6 +40,13 @@ def relay(handler):
         handler.send_error(400, 'Credentials are not accepted')
         return
     started = False
+    def error_response(status, code, upstream_status=None, permanent=False):
+        body=json.dumps({'code':code,'upstreamStatus':upstream_status,'permanent':permanent}).encode()
+        handler.send_response(status)
+        handler.send_header('Content-Type','application/json')
+        handler.send_header('Content-Length',str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
     try:
         size = int(handler.headers.get('Content-Length', '0'))
         if not 0 < size <= 8192 or handler.headers.get('Content-Type', '').split(';')[0] != 'application/json':
@@ -47,8 +55,12 @@ def relay(handler):
         request = urllib.request.Request(url, headers={'User-Agent': 'X-AI/local-media'})
         with urllib.request.build_opener(Redirect()).open(request, timeout=150) as upstream:
             length = int(upstream.headers.get('Content-Length', '0'))
-            if length > MAX_MEDIA or not upstream.headers.get('Content-Type', '').startswith('video/'):
-                raise ValueError('Not a supported video response')
+            if length > MAX_MEDIA:
+                error_response(413,'media_too_large',permanent=True)
+                return
+            if not upstream.headers.get('Content-Type', '').startswith(('video/','application/octet-stream')):
+                error_response(502,'non_video_response')
+                return
             handler.send_response(200)
             handler.send_header('Content-Type', 'video/mp4')
             if length:
@@ -62,15 +74,22 @@ def relay(handler):
                     handler.close_connection = True
                     break
                 handler.wfile.write(chunk)
+            if length and total != length:
+                handler.close_connection = True
+    except urllib.error.HTTPError as error:
+        if started:
+            handler.close_connection = True
+        else:
+            error_response(502,'upstream_http',error.code)
     except (BrokenPipeError, ConnectionResetError):
         pass
     except (ValueError, KeyError, TypeError):
         if started:
             handler.close_connection = True
         else:
-            handler.send_error(400, 'Unsupported video URL or request')
+            error_response(400,'unsupported_media_request',permanent=True)
     except Exception:
         if started:
             handler.close_connection = True
         else:
-            handler.send_error(502, 'Original video download failed; no task was created')
+            error_response(502,'upstream_unavailable')
