@@ -65,5 +65,18 @@ class MediaTests(unittest.TestCase):
             with self.request() as r:self.assertEqual(r.read(),b'12345678');self.assertEqual(r.headers['Content-Length'],'8')
             request=opener.return_value.open.call_args.args[0];self.assertFalse(request.has_header('Authorization'))
 
+    def test_upstream_expired_link_status_is_available_to_automatic_recovery(self):
+        with patch('local_media.valid_media_url',side_effect=lambda u:u),patch('local_media.urllib.request.build_opener') as opener:
+            opener.return_value.open.side_effect=urllib.error.HTTPError('https://example.test',403,'Expired',{},None)
+            with self.request() as r:
+                self.assertEqual(r.status,502)
+                self.assertEqual(json.loads(r.read())['upstreamStatus'],403)
+
+    def test_partial_response_is_closed_without_claiming_success(self):
+        with patch('local_media.valid_media_url',side_effect=lambda u:u),patch('local_media.urllib.request.build_opener') as opener:
+            opener.return_value.open.return_value=Response(b'1234')
+            with self.request() as r:
+                with self.assertRaises(Exception):r.read()
+
 
 if __name__=='__main__':unittest.main()

@@ -24,5 +24,5 @@ test('download and local stage progress are actual partial-operation percentages
   runner.activity={kind:'check',label:'抽帧',percent:60};assert.equal(queueProgress({jobs:[{...job,state:'checking'}]},runner,at).percent,60);
 });
 test('paused tracking and unknown submission do not masquerade as active generation',()=>{
-  const p=queueProgress({jobs:[{...job,state:'unknown',progressKnown:false,error:'请核实原编号'}]}, {},at);assert.equal(p.busy,false);assert.equal(p.indeterminate,false);assert.match(p.detail,/跟踪已停止/);assert.equal(p.warning,'请核实原编号');
+  const p=queueProgress({jobs:[{...job,state:'unknown',progressKnown:false,error:'请核实原编号'}]}, {},at);assert.equal(p.busy,false);assert.equal(p.indeterminate,false);assert.match(p.detail,/检查队列接续/);assert.equal(p.warning,'请核实原编号');
 });
