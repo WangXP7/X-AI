@@ -20,7 +20,10 @@ try{
   assert.equal((await context.request.get(new URL('src/studio.js',base).href)).status(),200);
   const identity=await(await context.request.get(new URL('__xai_health',base).href)).json();
   assert.equal(identity.app,'x-ai-video-studio');assert.equal(identity.version,version);
-  assert.equal(await page.locator('#single-editor').isVisible(),true);
+  assert.equal(await page.locator('#single-editor').isVisible(),false);
+  assert.equal(await page.locator('#pavo-editor').isVisible(),true);
+  assert.equal(await page.locator('.studio-project-bar').isVisible(),false);
+  assert.equal(await page.locator('.directory-bar').isVisible(),false);
   assert.equal(await page.locator('#batch-editor').isVisible(),false);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await page.screenshot({path:'test-results/startup-v112-desktop.png'});
@@ -36,7 +39,7 @@ try{
     sections:document.querySelectorAll('h3').length,scripts:document.scripts.length,
     missing:[...document.querySelectorAll('a[href^="#"]')].filter(a=>!document.getElementById(a.hash.slice(1))).length,
     overflow:document.documentElement.scrollWidth>innerWidth}));
-  assert.ok(reading.title.includes(version));assert.equal(reading.chapters,35);
+  assert.ok(reading.title.includes(version));assert.equal(reading.chapters,36);
   assert.equal(reading.missing,0);assert.equal(reading.scripts,0);assert.equal(reading.overflow,false);
   await doc.locator('.reader-nav a.level-2').last().click();
   await doc.locator('h2').last().evaluate(element=>element.scrollIntoView({behavior:'instant',block:'start'}));
@@ -48,6 +51,6 @@ try{
   const result={at:new Date().toISOString(),version,url:base,serverPid:identity.pid,
     app:{ready:true,desktopOverflow:false,mobileOverflow:false,errors,externalRequests:unexpected},
     document:{...reading,mobileOverflow:false,errors:docErrors,externalRequests:docRequests}};
-  await writeFile('test-results/startup-v120-results.json',JSON.stringify(result,null,2));
+  await writeFile('test-results/startup-v121-results.json',JSON.stringify(result,null,2));
   console.log(JSON.stringify(result,null,2));
 }finally{await browser.close();}
