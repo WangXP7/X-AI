@@ -1,6 +1,6 @@
 {
   "name": "x-ai-video-studio",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "private": true,
   "type": "module",
   "description": "Local-first static AgnesAI video production studio",

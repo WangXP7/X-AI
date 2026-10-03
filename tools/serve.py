@@ -1,4 +1,4 @@
-"""Serve X-AI on loopback; same-origin recovery for its output CDN, no API relay."""
+"""Serve X-AI on loopback; local/configured Pages media recovery, no API relay."""
 import argparse
 import functools
 import json
@@ -6,9 +6,17 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import unquote, urlsplit
 from local_runtime import ROOT, server_identity
 from local_media import relay
+import media_session
 
 class Handler(SimpleHTTPRequestHandler):
     prefix = ''
+
+    def media_path(self):
+        path = urlsplit(self.path).path
+        return '/' + path[len(self.prefix):] if self.prefix and path.startswith(self.prefix) else path
+
+    def do_OPTIONS(self):
+        media_session.preflight(self, self.media_path())
 
     def do_POST(self):
         expected = self.prefix + '__xai_media' if self.prefix else '/__xai_media'
@@ -18,6 +26,9 @@ class Handler(SimpleHTTPRequestHandler):
         relay(self)
 
     def do_GET(self):
+        if self.media_path() == '/__xai_media_session':
+            media_session.session(self)
+            return
         if self.prefix:
             if not self.path.startswith(self.prefix):
                 self.send_error(404)
@@ -40,7 +51,10 @@ class Handler(SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header('X-Content-Type-Options', 'nosniff')
         source = urlsplit(self.path).path
-        self.send_header('Cache-Control', 'no-store' if '/private/' in source or source.endswith('.js') else 'no-cache')
+        media_route = self.media_path() in media_session.PATHS
+        if media_route:
+            media_session.cors(self)
+        self.send_header('Cache-Control', 'no-store' if media_route or '/private/' in source or source.endswith('.js') else 'no-cache')
         super().end_headers()
 
 if __name__ == '__main__':

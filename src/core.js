@@ -107,6 +107,7 @@ export function validateProjectFile(p){
     if(a.remoteReleasedAt&&!a.videoId)fail();
     for(const name of ['downloadRetryAt','downloadLinkCheckedAt'])if(a[name]!==undefined&&(!Number.isFinite(a[name])||a[name]<0))fail();
     if(a.downloadFailures!==undefined&&(!Number.isSafeInteger(a.downloadFailures)||a.downloadFailures<0))fail();
+    if(a.downloadWaitingFor!=null&&!['browser-permission','download-channel'].includes(a.downloadWaitingFor))fail();
     for(const name of ['downloadRecovery','downloadPermanent'])if(a[name]!==undefined&&typeof a[name]!=='boolean')fail();
     if(a.downloadUrlHistory&&(!Array.isArray(a.downloadUrlHistory)||a.downloadUrlHistory.length>5||a.downloadUrlHistory.some(v=>!v||!safeExternalURL(v.url))))fail();
     if(a.frameKeys&&(!Array.isArray(a.frameKeys)||a.frameKeys.length>5||a.frameKeys.some(k=>!key(k))))fail();

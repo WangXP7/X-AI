@@ -11,6 +11,7 @@ export function recoverDownloads(project){
 }
 export function downloadDelay(){return 5000;}
 export function shouldRefreshLink(attempt,error,at=Date.now()){
+  if(error?.code==='media_channel_unavailable')return false;
   if(!attempt.videoId||at-Number(attempt.downloadLinkCheckedAt||0)<30000)return false;
   return [401,403,404,410].includes(error?.status)||(attempt.downloadFailures||0)>=2;
 }

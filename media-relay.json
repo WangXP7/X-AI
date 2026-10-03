@@ -1,0 +1,5 @@
+{
+  "protocol": "x-ai-media-v1",
+  "pageOrigins": ["https://wangxp7.github.io"],
+  "endpoint": "http://127.0.0.1:4183/"
+}
