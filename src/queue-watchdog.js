@@ -1,6 +1,6 @@
 import {get,permitted} from './storage.js';
 import {recoverDownloads} from './download-recovery.js';
-import {migrateAutomaticQueue,inspectQueue} from './queue-health.js';
+import {migrateAutomaticQueue,inspectQueue,recoverLocalChecks} from './queue-health.js';
 import {pacingKey} from './request-pacing.js';
 import {modelProfile} from './models.js';
 export class QueueWatchdog{
@@ -10,8 +10,8 @@ export class QueueWatchdog{
     try{
       const {project,runner,folder,busyReason}=this.context();if(!project||!runner)return;
       if(busyReason||runner.starting){runner.health={at:Date.now(),code:'local-busy',message:(busyReason||'正在取得队列运行权')+'，结束后自动接续队列'};this.onChange();return;}
-      const migrated=migrateAutomaticQueue(project),recovered=recoverDownloads(project);
-      if(migrated||recovered){runner.event('queue_migrated',`1.2.3：恢复 ${migrated} 个旧版自动提交意图、${recovered} 个下载检查点`);await runner.persist();}
+      const migrated=migrateAutomaticQueue(project),recovered=recoverDownloads(project),local=recoverLocalChecks(project);
+      if(migrated||recovered||local){runner.event('queue_migrated',`恢复 ${migrated} 个旧版自动提交意图、${recovered} 个下载检查点、${local} 个原片校验`);await runner.persist();}
       const profile=modelProfile(project.jobs.find(j=>j.uid===runner.activeUid)?.profileId);runner.rate=await get('state',pacingKey(profile.platformId||profile.id,'submit'))||{};runner.cooldowns=await get('state','submission-cooldowns')||{};
       let health=inspectQueue(project,runner);
       if(busyReason)health={code:'local-busy',message:busyReason+'，结束后自动接续队列',canStart:false};

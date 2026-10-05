@@ -144,7 +144,7 @@ export class Runner {
   }
   setLocalActivity(job,value){this.localActivity={...value,uid:job.uid,updatedAt:Date.now()};this.onActivity();}
   launchLocalCheck(job,file){
-    if(this.localChecks.has(job.uid))return;
+    if(this.localChecks.has(job.uid)||job.attempts.at(-1)?.localCheckRetryAt>Date.now())return;
     const task=(async()=>{
       try{
         if(job.state==='download'){await this.step(job);return;}
@@ -152,7 +152,8 @@ export class Runner {
         await this.acceptFile(job,file,job.attempts.at(-1),{autoDownload:true,background:true});
       }catch(error){
         const a=job.attempts.at(-1);a.lastProblem=networkRecord(error)||{at:now(),operation:'local',code:error.name,message:friendlyError(error)};
-        if(error instanceof ConnectionError&&error.operation==='media'){a.downloadRecovery=true;a.downloadRetryAt=Date.now()+downloadDelay((a.downloadFailures=(a.downloadFailures||0)+1));job.state='download';job.error=null;}
+        if(error.name==='LocalCheckUnavailable'){a.localCheckFailures=(a.localCheckFailures||0)+1;a.localCheckRetryAt=Date.now()+30000;job.state='checking';job.error=null;}
+        else if(error instanceof ConnectionError&&error.operation==='media'){a.downloadRecovery=true;a.downloadRetryAt=Date.now()+downloadDelay((a.downloadFailures=(a.downloadFailures||0)+1));job.state='download';job.error=null;}
         else{job.state='blocked';job.error=friendlyError(error);}
         this.event('background_check_recovery',friendlyError(error),job.id);await this.persist().catch(()=>{});
       }finally{this.localChecks.delete(job.uid);this.localActivity={kind:'idle'};this.onChange();}
@@ -179,7 +180,7 @@ export class Runner {
         let job=p.jobs.find(j=>(['queued','generating','download','checking','blocked','deferred','submitting','unknown'].includes(j.state)||j.state==='pending'&&j.attempts.at(-1)?.videoId)&&remoteBlocks(j)&&!this.localChecks.has(j.uid));
         if(job&&['pending','submitting','unknown'].includes(job.state)&&job.attempts.at(-1)?.videoId){job.state='queued';await this.persist(true);}
         if(!job&&!this.pauseNew&&this.transport.key)job=p.jobs.find(j=>j.state==='pending'&&(this.runAll||j.autoSubmit||this.allowedUids.has(j.uid))&&(!j.continuityFrom||p.jobs.some(prev=>prev.id===j.continuityFrom&&['ready','approved'].includes(prev.state)&&prev.current?.lastFrameKey)));
-        if(!job){if(this.localChecks.size){await Promise.race(this.localChecks.values());continue;}break;}
+        if(!job){if(this.localChecks.size){await Promise.race(this.localChecks.values());continue;}const localRetry=p.jobs.find(j=>j.state==='checking'&&j.attempts.at(-1)?.localCheckRetryAt>Date.now());if(localRetry){this.setActivity({kind:'waiting',label:'本地校验引擎自动恢复，原片已保留',waitUntil:localRetry.attempts.at(-1).localCheckRetryAt});await sleep(1000);continue;}break;}
         if(!this.transport.key&&['pending','deferred','queued','generating'].includes(job.state))break;
         if(this.pauseNew&&job.state==='deferred')break;
         if(job.state==='blocked')throw Error(job.error||'当前任务恢复条件尚未满足。');
@@ -262,7 +263,8 @@ export class Runner {
   }
   async saveDownloaded(job,file,attempt=job.attempts.at(-1)){
     const {folder}=this.context();this.setActivity({kind:'save',label:'核对视频哈希并保存原始文件'});const incomingHash=await sha256(file);
-    if(attempt.sha256&&attempt.sha256!==incomingHash&&!attempt.replacingDownload){const old={...attempt};delete old.downloadHistory;(attempt.downloadHistory??=[]).push(old);attempt.downloadSequence=(attempt.downloadSequence||1)+1;attempt.replacingDownload=true;}
+    const priorRawHash=attempt.rawSha256||attempt.sha256;
+    if(priorRawHash&&priorRawHash!==incomingHash&&!attempt.replacingDownload){const old={...attempt};delete old.downloadHistory;(attempt.downloadHistory??=[]).push(old);attempt.downloadSequence=(attempt.downloadSequence||1)+1;attempt.replacingDownload=true;}
     const suffix=attempt.downloadSequence?'_d'+attempt.downloadSequence:'';
     attempt.rawSha256=incomingHash;attempt.rawBytes=file.size;attempt.rawBlobKey='raw:'+job.uid+':'+attempt.number+suffix;await storeBlob(attempt.rawBlobKey,file);attempt.rawPath=rawDownloadPath(job,attempt);await writeFile(folder,attempt.rawPath,file);
     attempt.downloadCompleteAt=now();await writeDownloadReceipt(folder,job,attempt);if(attempt.videoId)attempt.remoteReleasedAt=attempt.remoteReleasedAt||attempt.downloadCompleteAt;job.state='checking';job.error=null;this.event('downloaded','原片已保存，后台校验；后续独立镜头可继续提交',job.id);await this.persist(true);
@@ -273,11 +275,11 @@ export class Runner {
     const incomingHash=await sha256(file);if(!downloadSaved(job)||attempt.rawSha256!==incomingHash)await this.saveDownloaded(job,file,attempt);
     const suffix=attempt.downloadSequence?'_d'+attempt.downloadSequence:'';
     activity({kind:'check',label:'正在检查视频容器与时长'});let qa;
-    try{qa=await inspectVideo(file,job,{deep:true,onProgress:value=>activity({kind:'check',...value})});if(autoDownload&&(qa.fullDecode==='failed'||qa.fatal.some(s=>/MP4容器|过小/.test(s))))throw new ConnectionError('media','local',{name:'CorruptDownload'});}
-    catch(error){if(autoDownload&&(error instanceof ConnectionError||/视频.*(加载|解码|元数据)/.test(error.message))){attempt.discardedDownload={at:now(),path:attempt.rawPath,sha256:incomingHash,bytes:file.size};delete attempt.rawBlobKey;delete attempt.rawPath;delete attempt.rawSha256;delete attempt.downloadCompleteAt;throw error instanceof ConnectionError?error:new ConnectionError('media','local',{name:'CorruptDownload'});}throw error;}
-    const samples=qa.samples;delete qa.samples;attempt.qa=qa;attempt.sha256=incomingHash;attempt.bytes=file.size;attempt.path=`clips/${job.episode}/${job.id}_v${attempt.number}${suffix}.mp4`;attempt.blobKey='clip:'+job.uid+':'+attempt.number+suffix;activity({kind:'save',label:'正在保存视频、抽帧与核验记录'});await storeBlob(attempt.blobKey,file);await writeFile(folder,attempt.path,file);
+    try{qa=await inspectVideo(file,job,{deep:true,onProgress:value=>activity({kind:'check',...value})});if(autoDownload&&(qa.fullDecode==='failed'||qa.fatal.some(s=>/MP4容器|过小/.test(s))))throw new ConnectionError('media','local',{name:'CorruptDownload'});if(autoDownload&&qa.technical==='partial'){const failure=new Error('本地解码引擎暂不可用，原片已保留，30秒后自动恢复校验。');failure.name='LocalCheckUnavailable';throw failure;}}
+    catch(error){if(autoDownload&&error.name!=='LocalCheckUnavailable'&&(error instanceof ConnectionError||error.name==='CorruptDownload'||/视频.*(加载|解码|元数据)/.test(error.message))){attempt.discardedDownload={at:now(),path:attempt.rawPath,sha256:incomingHash,bytes:file.size};delete attempt.rawBlobKey;delete attempt.rawPath;delete attempt.rawSha256;delete attempt.downloadCompleteAt;throw error instanceof ConnectionError?error:new ConnectionError('media','local',{name:'CorruptDownload'});}throw error;}
+    const samples=qa.samples,playbackFile=qa.playbackFile||file;delete qa.samples;delete qa.playbackFile;attempt.qa=qa;attempt.sha256=await sha256(playbackFile);attempt.bytes=playbackFile.size;if(qa.normalization)attempt.playbackSource={path:attempt.rawPath,sha256:incomingHash,bytes:file.size,transform:qa.normalization};else delete attempt.playbackSource;attempt.path=`clips/${job.episode}/${job.id}_v${attempt.number}${suffix}.mp4`;attempt.blobKey='clip:'+job.uid+':'+attempt.number+suffix;activity({kind:'save',label:'正在保存视频、抽帧与核验记录'});await storeBlob(attempt.blobKey,playbackFile);await writeFile(folder,attempt.path,playbackFile);
     if(samples){attempt.frameDirectory=`checks/${job.id}_v${attempt.number}${suffix}`;attempt.frameKeys=[];for(let i=0;i<samples.frames.length;i++){const key=`frame:${job.uid}:${attempt.number}${suffix}:${i}`;await storeBlob(key,samples.frames[i]);attempt.frameKeys.push(key);await writeFile(folder,`${attempt.frameDirectory}/frame_${i+1}.jpg`,samples.frames[i]);}attempt.lastFrameKey=`last:${job.uid}:${attempt.number}${suffix}`;await storeBlob(attempt.lastFrameKey,samples.last);attempt.lastFramePath=`${attempt.frameDirectory}/last.png`;attempt.lastFrameSha256=await sha256(samples.last);await writeFile(folder,attempt.lastFramePath,samples.last);}
-    delete attempt.lastProblem;delete attempt.replacingDownload;attempt.resolved=true;attempt.downloadedAt=now();job.current=JSON.parse(JSON.stringify(attempt));job.state=qa.fatal.length?'needs_redo':qa.technical==='passed'?'ready':'blocked';job.review='pending';job.error=qa.fatal.join('；')|| (qa.technical==='partial'?'尚未完成深度校验，请重试校验。':null);
+    delete attempt.lastProblem;delete attempt.localCheckRetryAt;delete attempt.replacingDownload;attempt.resolved=true;attempt.downloadedAt=now();job.current=JSON.parse(JSON.stringify(attempt));job.state=qa.fatal.length?'needs_redo':qa.technical==='passed'?'ready':'blocked';job.review='pending';job.error=qa.fatal.join('；')|| (qa.technical==='partial'?'尚未完成深度校验，请重试校验。':null);
     await writeFile(folder,`checks/${job.id}_v${attempt.number}${suffix}/report.json`,JSON.stringify(qa,null,2));this.event('checked',`${job.state}；${qa.fatal.join('；')} ${qa.warnings.join('；')}`,job.id);await this.persist(true);
   }
   async retryDownload(job){const a=job.attempts.at(-1);if(!a?.url)throw Error('没有下载地址，请先查询原任务。');if(a.videoId&&a.resolved)a.remoteReleasedAt=a.remoteReleasedAt||a.downloadedAt||now();a.forceDownload=true;job.state='download';job.error=null;await this.persist();return this.start();}

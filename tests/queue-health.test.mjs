@@ -1,8 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {migrateAutomaticQueue,inspectQueue,remoteBlocks} from '../src/queue-health.js';
+import {migrateAutomaticQueue,inspectQueue,remoteBlocks,recoverLocalChecks} from '../src/queue-health.js';
 import {makeProject,newJob,validateProjectFile} from '../src/core.js';
 const base={id:'S03',episode:'EP01',prompt:'4秒，小熊挥手',seconds:4,aspect:'16:9',mode:'text',assetIds:[]};
+test('saved S11 with legacy metadata timeout resumes original local check, without a new generation',()=>{
+ const p=makeProject(),j=newJob({...base,id:'S11'});p.jobs=[j];j.state='blocked';j.error='无法读取媒体信息，请转换为常见格式后导入。';j.attempts=[{number:1,videoId:'original',rawPath:'raw/S11.mp4',rawSha256:'a'.repeat(64),downloadCompleteAt:new Date().toISOString(),lastProblem:{operation:'local',code:'Error',message:j.error}}];
+ assert.equal(recoverLocalChecks(p),1);assert.equal(j.state,'checking');assert.equal(j.error,null);assert.equal(j.attempts.length,1);assert.equal(j.attempts[0].videoId,'original');assert.equal(remoteBlocks(j),false);assert.equal(inspectQueue(p).canStart,true);assert.equal(recoverLocalChecks(p),0);
+});
+test('legacy recovery does not override real QA failures, permissions, missing originals or resolved results',()=>{
+ const saved={number:1,videoId:'original',rawPath:'raw/S11.mp4',rawSha256:'a'.repeat(64),downloadCompleteAt:new Date().toISOString(),lastProblem:{operation:'local',code:'Error',message:'无法读取媒体信息，请转换为常见格式后导入。'}};
+ for(const change of [j=>j.attempts[0].lastProblem.message='实际画幅不符合16:9。',j=>j.attempts[0].lastProblem.message='本地文件权限被拒绝',j=>delete j.attempts[0].rawSha256,j=>j.current={},j=>j.attempts[0].resolved=true,j=>j.attempts[0].lastProblem.operation='submit']){
+  const j=newJob(base);j.state='blocked';j.attempts=[structuredClone(saved)];change(j);assert.equal(recoverLocalChecks({jobs:[j]}),0);assert.equal(j.state,'blocked');
+ }
+});
 test('download recovery backoff is not mislabeled as API rate limiting',()=>{
  const at=Date.now(),runner={running:true,activity:{kind:'recovery',waitUntil:at+76000}};
  const health=inspectQueue({jobs:[]},runner,at);assert.equal(health.code,'download-recovery');assert.match(health.message,/76 秒/);assert.doesNotMatch(health.message,/遵守请求间隔/);

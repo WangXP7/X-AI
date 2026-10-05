@@ -90,7 +90,7 @@ def job_wrapper(root,port):
     job=k.CreateJobObjectW(None,None);info=Extended();info.basic.flags=0x2000|0x800
     if not k.SetInformationJobObject(w.HANDLE(job),9,ctypes.byref(info),ctypes.sizeof(info)):raise OSError(ctypes.get_last_error())
     if not k.AssignProcessToJobObject(w.HANDLE(job),w.HANDLE(k.GetCurrentProcess())):raise OSError(ctypes.get_last_error())
-    child=subprocess.run([sys.executable,str(Path(root)/'tools/launch.py'),'--no-browser','--port',str(port)],capture_output=True,text=True,timeout=30)
+    child=subprocess.run([sys.executable,str(Path(root)/'tools/launch.py'),'--no-browser','--no-recovery','--port',str(port)],capture_output=True,text=True,timeout=30)
     print(child.stdout,flush=True)
     if child.returncode:raise RuntimeError(child.stderr)
     # The OS closes the job handle at process exit. Escaped service/guardian live.

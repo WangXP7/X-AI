@@ -17,6 +17,13 @@ export function downloadSaved(job){
   const a=job.attempts?.at(-1);
   return !!(a?.downloadCompleteAt&&a.rawPath&&a.rawSha256);
 }
+export function recoverLocalChecks(project){
+  let changed=0;
+  for(const job of project.jobs||[]){const a=job.attempts?.at(-1),problem=a?.lastProblem;
+    if(job.state==='blocked'&&!job.current&&!a?.resolved&&a?.videoId&&downloadSaved(job)&&problem?.operation==='local'&&(problem.code==='LocalCheckUnavailable'||/无法读取媒体信息|媒体时长无法识别|浏览器无法解码文件|视频加载超时|抽帧超时/.test(problem.message||''))){job.state='checking';job.error=null;delete a.localCheckRetryAt;changed++;}
+  }
+  return changed;
+}
 export function unresolvedSubmission(job){
   const a=job.attempts?.at(-1);
   return !a?.resolved&&!a?.terminalConfirmed&&!a?.videoId&&(['unknown','submitting'].includes(job.state)||job.state==='pending'&&!!a?.submittedAt&&!a?.rejectedBeforeCreation);

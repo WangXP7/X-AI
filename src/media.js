@@ -2,8 +2,11 @@ import {uid,sha256,DIMENSIONS} from './core.js';
 import {durationQA} from './prompt-spec.js';
 import {storeBlob,blob,readAsset,freshSource} from './storage.js';
 import {sourceMetadata} from './asset-source.js';
+import {MediaEngineQueue} from './media-engine.js';
 export function dataURL(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(r.error);r.readAsDataURL(file);});}
-function metadata(file,type){return new Promise((resolve,reject)=>{const el=document.createElement(type),url=URL.createObjectURL(file);let timer=setTimeout(()=>finish(Error('无法读取媒体信息，请转换为常见格式后导入。')),15000);const finish=(err)=>{clearTimeout(timer);const info={duration:el.duration,width:el.videoWidth,height:el.videoHeight};el.removeAttribute('src');el.load();URL.revokeObjectURL(url);err?reject(err):resolve(info);};el.preload='metadata';el.onloadedmetadata=()=>finish(Number.isFinite(el.duration)&&el.duration>0?null:Error('媒体时长无法识别。'));el.onerror=()=>finish(Error('此浏览器无法解码文件，请转为 MP4/H.264 或 WAV/MP3。'));el.src=url;});}
+function metadata(file,type){return new Promise((resolve,reject)=>{const el=document.createElement(type),url=URL.createObjectURL(file);let done=false,timer,poll;const finish=(err)=>{if(done)return;done=true;clearTimeout(timer);clearInterval(poll);const info={duration:el.duration,width:el.videoWidth,height:el.videoHeight};el.onloadedmetadata=el.onerror=null;el.removeAttribute('src');el.load();URL.revokeObjectURL(url);err?reject(err):resolve(info);};const read=()=>{if(Number.isFinite(el.duration)&&el.duration>0&&(type!=='video'||el.videoWidth>0&&el.videoHeight>0))finish();};timer=setTimeout(()=>{const error=new Error(type==='video'?'浏览器读取媒体信息超时，程序将自动复核原片。':'声音信息读取超时，请重新读取此素材。');error.name='MediaMetadataUnavailable';finish(error);},15000);poll=setInterval(read,250);el.preload='auto';el.onloadedmetadata=read;el.onerror=()=>{const error=new Error(type==='video'?'浏览器暂时无法读取媒体，程序将自动复核原片。':'此浏览器无法解码声音，请检查素材格式。');error.name='MediaMetadataUnavailable';finish(error);};el.src=url;el.load();});}
+async function stableVideo(file){return new Blob([await file.arrayBuffer()],{type:'video/mp4'});}
+async function browserVideoMetadata(file){let error;for(let i=0;i<2;i++){try{return await metadata(file,'video');}catch(e){error=e;}}throw error;}
 export async function importAsset(file,extra={},onProgress=()=>{}){
   extra=sourceMetadata(file,extra);
   try{file=await freshSource(file,extra);}catch(e){e.xaiOperation='source-read';throw e;}
@@ -60,29 +63,56 @@ export async function trimAudio(asset,start,end){
     const output=await importAsset(new File([result],name,{type}),{derivedFrom:asset.id,transform:`截取${start}–${end}秒；同名另存，原文件保留，不补写或伪造对白`});output.path='references/optimized/'+asset.id+'/'+output.id+'/'+name;return output;
   }finally{await context.close();}
 }
-async function seek(video,t){await new Promise((resolve,reject)=>{if(Math.abs(video.currentTime-t)<.01&&video.readyState>=2)return resolve();const timer=setTimeout(()=>reject(Error('抽帧超时，请使用深度校验。')),12000);video.onseeked=()=>{clearTimeout(timer);resolve();};video.currentTime=t;});}
+async function seek(video,t){await new Promise((resolve,reject)=>{if(Math.abs(video.currentTime-t)<.01&&video.readyState>=2)return resolve();const finish=error=>{clearTimeout(timer);video.onseeked=null;error?reject(error):resolve();},timer=setTimeout(()=>finish(Error('抽帧超时。')),12000);video.onseeked=()=>finish();video.currentTime=t;});}
 export async function sampleVideo(file,onProgress=()=>{}){
-  const video=document.createElement('video'),url=URL.createObjectURL(file);video.muted=true;video.preload='auto';video.src=url;
-  try{await new Promise((r,j)=>{const t=setTimeout(()=>j(Error('视频加载超时。')),15000);video.onloadeddata=()=>{clearTimeout(t);r();};video.onerror=()=>{clearTimeout(t);j(Error('视频无法解码。'));};});const canvas=document.createElement('canvas');canvas.width=240;canvas.height=Math.round(240*video.videoHeight/video.videoWidth);const ctx=canvas.getContext('2d',{willReadFrequently:true}),frames=[],dark=[];
+  const video=document.createElement('video'),url=URL.createObjectURL(file);video.muted=true;video.preload='auto';
+  try{await new Promise((r,j)=>{let done=false;const finish=error=>{if(done)return;done=true;clearTimeout(t);video.onloadeddata=video.onerror=null;error?j(error):r();},t=setTimeout(()=>finish(Error('视频加载超时。')),15000);video.onloadeddata=()=>finish();video.onerror=()=>finish(Error('视频无法解码。'));video.src=url;video.load();});const canvas=document.createElement('canvas');canvas.width=240;canvas.height=Math.round(240*video.videoHeight/video.videoWidth);const ctx=canvas.getContext('2d',{willReadFrequently:true}),frames=[],dark=[];
     for(const ratio of [.06,.27,.5,.73,.97]){await seek(video,Math.max(.01,video.duration*ratio));ctx.drawImage(video,0,0,canvas.width,canvas.height);const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;let black=0;for(let i=0;i<pixels.length;i+=4)if((pixels[i]+pixels[i+1]+pixels[i+2])/3<15)black++;dark.push(black/(pixels.length/4));frames.push(await new Promise(r=>canvas.toBlob(r,'image/jpeg',.8)));onProgress({label:`正在抽帧检查 · ${frames.length} / 5`,percent:frames.length/5*100});}
     const last=document.createElement('canvas');last.width=video.videoWidth;last.height=video.videoHeight;await seek(video,Math.max(.01,video.duration-.08));last.getContext('2d').drawImage(video,0,0);return {frames,last:await new Promise(r=>last.toBlob(r,'image/png')),dark};
-  }finally{video.removeAttribute('src');video.load();URL.revokeObjectURL(url);}
+  }finally{video.onloadeddata=video.onerror=video.onseeked=null;video.removeAttribute('src');video.load();URL.revokeObjectURL(url);}
 }
-let ff,chain=Promise.resolve();
-async function engine(){if(ff)return ff;const {FFmpeg}=await import('../vendor/ffmpeg/index.js');const instance=new FFmpeg();await instance.load({coreURL:new URL('../vendor/ffmpeg-core/ffmpeg-core.js',import.meta.url).href,wasmURL:new URL('../vendor/ffmpeg-core/ffmpeg-core.wasm',import.meta.url).href});ff=instance;return ff;}
-function serialFF(fn){const p=chain.catch(()=>{}).then(async()=>fn(await engine()));chain=p;return p;}
+async function engineVideoInfo(file){return serialFF(async f=>{
+  const input=uid()+'.mp4',logs=[],log=({message})=>logs.push(message);f.on('log',log);
+  try{
+    await f.writeFile(input,new Uint8Array(await file.arrayBuffer()));
+    // Bundled ffprobe aborts after printing JSON and poisons that worker.
+    // ffmpeg's zero-duration null output opens streams without rewriting input.
+    const status=await f.exec(['-hide_banner','-i',input,'-map','0:v:0','-map','0:a?','-t','0','-f','null','-'],30000);
+    const header=logs.join('\n').split('Stream mapping:')[0],time=header.match(/Duration:\s*(\d+):(\d+):([\d.]+)/),stream=header.split('\n').find(line=>/Stream #0:.*Video:/.test(line)),dimensions=stream?.match(/,\s*(\d{2,5})x(\d{2,5})(?:[, ]|$)/);
+    if(status!==0){const corrupt=/moov atom not found|Invalid data found|could not find codec parameters/i.test(header),error=new Error(corrupt?'原视频容器损坏，程序将重新取回原片。':'本地原片探测暂未完成，程序将自动继续。');error.name=corrupt?'CorruptDownload':'LocalCheckUnavailable';throw error;}
+    if(!time||!dimensions)throw Error('原视频没有有效的时长或视频轨。');
+    return {duration:Number(time[1])*3600+Number(time[2])*60+Number(time[3]),width:Number(dimensions[1]),height:Number(dimensions[2]),codec:stream.match(/Video:\s*(\w+)/)?.[1]};
+  }finally{f.off('log',log);await f.deleteFile(input).catch(()=>{});}
+});}
+async function normalizePlayback(file,transcode=false){return serialFF(async f=>{const input=uid()+'.mp4',output=uid()+'.mp4';try{await f.writeFile(input,new Uint8Array(await file.arrayBuffer()));const args=['-hide_banner','-v','error','-i',input,'-map','0:v:0','-map','0:a?'];args.push(...(transcode?['-c:v','libx264','-preset','ultrafast','-crf','20','-pix_fmt','yuv420p','-c:a','aac']:['-c','copy']),'-movflags','+faststart',output);if(await f.exec(args,180000)!==0)throw Error('本地播放兼容处理未成功。');return new Blob([await f.readFile(output)],{type:'video/mp4'});}finally{await f.deleteFile(input).catch(()=>{});await f.deleteFile(output).catch(()=>{});}});}
+async function readableVideo(file,onProgress){
+  file=await stableVideo(file);
+  try{const info=await browserVideoMetadata(file),samples=await sampleVideo(file,onProgress);return {file,info,samples};}
+  catch(browserError){
+    onProgress({label:'浏览器读取未完成，正在用本地引擎复核原片'});const original=await engineVideoInfo(file);
+    // A metadata event timeout is not proof of a corrupt download. Verify actual
+    // streams first; lossless remux precedes encoding, and raw bytes stay intact.
+    for(const transcode of [false,true]){
+      try{onProgress({label:transcode?'正在自动生成兼容播放副本':'正在自动整理视频容器'});const playable=await normalizePlayback(file,transcode),info=await browserVideoMetadata(playable);if(Math.abs(info.duration-original.duration)>.1||info.width!==original.width||info.height!==original.height)throw Error('播放副本尺寸或时长核对失败。');const samples=await sampleVideo(playable,onProgress);return {file:playable,info,samples,normalization:transcode?'h264-aac':'remux',original};}catch(error){browserError=error;}
+    }
+    const unavailable=new Error('本地播放校验暂未完成，原片保留，程序将自动继续。');unavailable.name='LocalCheckUnavailable';unavailable.cause=browserError;throw unavailable;
+  }
+}
+const mediaEngine=new MediaEngineQueue(async()=>{const {FFmpeg}=await import('../vendor/ffmpeg/index.js');const instance=new FFmpeg(),load=instance.load.bind(instance);instance.load=()=>load({coreURL:new URL('../vendor/ffmpeg-core/ffmpeg-core.js',import.meta.url).href,wasmURL:new URL('../vendor/ffmpeg-core/ffmpeg-core.wasm',import.meta.url).href});return instance;});
+function serialFF(fn,options){return mediaEngine.run(fn,options);}
 export async function deepCheck(file,onProgress=()=>{}){onProgress({label:'正在加载本地解码引擎'});return serialFF(async f=>{const input=uid()+'.mp4',logs=[];const log=({message})=>logs.push(message),progress=({progress})=>onProgress({label:'正在完整解码视频',percent:Number.isFinite(progress)?Math.min(99,Math.max(0,progress*100)):null});f.on('log',log);f.on('progress',progress);try{onProgress({label:'正在读取视频并完整解码'});await f.writeFile(input,new Uint8Array(await file.arrayBuffer()));const code=await f.exec(['-hide_banner','-v','info','-xerror','-i',input,'-map','0:v:0','-map','0:a?','-f','null','-'],180000);const joined=logs.join('\n');const fps=Number(joined.match(/,\s*([\d.]+) fps[, ]/)?.[1])||null;return {fullDecode:code===0?'passed':'failed',hasAudio:/Audio:/.test(joined),fps,error:code===0?null:logs.slice(-6).join('\n').slice(0,1500)};}finally{f.off('log',log);f.off('progress',progress);await f.deleteFile(input).catch(()=>{});}});}
 export async function inspectVideo(file,job,{deep=true,onProgress=()=>{}}={}){
   const fatal=[],warnings=[],head=new Uint8Array(await file.slice(0,64).arrayBuffer());const sig=new TextDecoder('latin1').decode(head);if(!sig.includes('ftyp'))fatal.push('文件不是有效的MP4容器；请重新下载，不能把错误页面当视频。');
   if(file.size<1024)fatal.push('视频文件过小，可能下载不完整。');
   if(fatal.length)return {fatal,warnings,technical:'failed'};
-  const info=await metadata(file,'video'),target=DIMENSIONS[job.aspect];
+  onProgress({label:'正在读取时长、画幅与抽帧'});const readable=await readableVideo(file,onProgress),{info,samples}=readable,target=DIMENSIONS[job.aspect];
   const durationCheck=durationQA(info.duration,job.seconds);fatal.push(...durationCheck.fatal);warnings.push(...durationCheck.warnings);
   if(!target||Math.abs(info.width/info.height-target[0]/target[1])>.045)fatal.push(`实际画幅${info.width}×${info.height}不符合${job.aspect}。`);
   if(Math.min(info.width,info.height)<680)fatal.push(`分辨率${info.width}×${info.height}明显低于720P。`);
-  onProgress({label:'正在读取时长、画幅与抽帧'});const samples=await sampleVideo(file,onProgress);if(samples.dark.some(v=>v>.9))warnings.push('抽帧有大面积暗画面；可能是夜景或黑帧，请查看后判断。');
+  if(samples.dark.some(v=>v>.9))warnings.push('抽帧有大面积暗画面；可能是夜景或黑帧，请查看后判断。');
   let decode={fullDecode:'not_run'};if(deep){try{decode=await deepCheck(file,onProgress);if(decode.fullDecode==='failed')fatal.push('完整解码未通过，建议先重新下载。');if(!decode.hasAudio)warnings.push('未发现音轨；请检查是否符合本镜要求。');if(decode.fps&&Math.abs(decode.fps-24)>.1)warnings.push(`帧率${decode.fps}fps，拼接时将统一为24fps。`);}catch(e){warnings.push('深度校验暂不可用，请重试；尚未确认完整解码通过。');decode.error=e.message;}}
-  return {...info,...decode,fatal,warnings,technical:fatal.length?'failed':decode.fullDecode==='passed'?'passed':'partial',darkRatios:samples.dark,samples};
+  if(readable.normalization&&deep&&decode.fullDecode==='passed'){const playableDecode=await deepCheck(readable.file,onProgress);if(playableDecode.fullDecode!=='passed')fatal.push('播放副本完整解码未通过。');if(playableDecode.hasAudio!==decode.hasAudio)fatal.push('播放副本音轨与原片不一致。');}
+  return {...info,...decode,fatal,warnings,technical:fatal.length?'failed':decode.fullDecode==='passed'?'passed':'partial',darkRatios:samples.dark,samples,...(readable.normalization?{normalization:readable.normalization,originalMetadata:readable.original,playbackFile:readable.file}:{})};
 }
 export async function concatenate(files,dimensions,onProgress=()=>{}){
   if(files.reduce((s,f)=>s+f.size,0)>450_000_000)throw Error('本集超过450MB的浏览器拼接安全上限。请分组拼接，或导出清单交给本地FFmpeg处理。');
@@ -92,6 +122,6 @@ export async function concatenate(files,dimensions,onProgress=()=>{}){
       args.push('-filter_complex',filters+';'+files.map((_,i)=>`[v${i}][a${i}]`).join('')+`concat=n=${files.length}:v=1:a=1[v][a]`,'-map','[v]','-map','[a]','-c:v','libx264','-preset','ultrafast','-crf','20','-c:a','aac','-b:a','160k','-movflags','+faststart',output);
       const code=await f.exec(args,600000);if(code!==0)throw Error('拼接失败。请确认每镜都有音轨、画幅一致，或减少本集镜数。');const result=await f.readFile(output);return new Blob([result],{type:'video/mp4'});
     }finally{f.off('progress',progress);for(const n of [...names,output])await f.deleteFile(n).catch(()=>{});}
-  });
+  },{timeout:660000});
 }
-export const videoMetadata=file=>metadata(file,'video');
+export const videoMetadata=async file=>browserVideoMetadata(await stableVideo(file));
