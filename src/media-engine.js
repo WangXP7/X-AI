@@ -1,22 +1,26 @@
 function unavailable(message,stage,code){const error=new Error(message);error.name='LocalCheckUnavailable';error.decoderDiagnostic={stage,code,at:new Date().toISOString()};return error;}
-function deadline(work,milliseconds,label,cancel=()=>{}){
-  let timer;
-  const limit=new Promise((_,reject)=>{timer=setTimeout(()=>{cancel();reject(unavailable(label+'超时，已释放解码引擎，原片保留。',label==='解码文件加载'?'assets':label==='本地媒体处理'?'operation':'initialize','timeout'));},milliseconds);});
-  return Promise.race([work,limit]).finally(()=>clearTimeout(timer));
+function deadline(work,milliseconds,label,cancel=()=>{},activity,maxTime){
+  let timer,maximum;
+  const arm=()=>{clearTimeout(timer);timer=setTimeout(expire,milliseconds);};
+  let expire;
+  const limit=new Promise((_,reject)=>{expire=()=>{cancel();reject(unavailable(label+'停止响应超时，已释放解码引擎，原片保留。',label==='解码文件加载'?'assets':label==='本地媒体处理'?'operation':'initialize','timeout'));};arm();if(maxTime)maximum=setTimeout(expire,maxTime);});
+  if(activity)activity.touch=arm;
+  return Promise.race([work,limit]).finally(()=>{clearTimeout(timer);clearTimeout(maximum);if(activity)activity.touch=null;});
 }
 export class MediaEngineQueue{
-  constructor(factory,{loadTimeout=30000,factoryTimeout=120000,retryDelay=30000}={}){Object.assign(this,{factory,loadTimeout,factoryTimeout,retryDelay});this.instance=null;this.chain=Promise.resolve();this.pending=0;this.retryAt=0;}
+  constructor(factory,{loadTimeout=30000,factoryTimeout=120000,factoryMaxTime=1800000,retryDelay=30000}={}){Object.assign(this,{factory,loadTimeout,factoryTimeout,factoryMaxTime,retryDelay});this.instance=null;this.chain=Promise.resolve();this.pending=0;this.retryAt=0;}
   reset(instance=this.instance){try{instance?.terminate();}catch{}if(this.instance===instance)this.instance=null;}
   async engine(onProgress){
     if(this.instance)return this.instance;
     if(this.retryAt>Date.now())throw this.failure;
     let error;
     for(let attempt=0;attempt<2;attempt++){
-      let instance,expired=false;const controller=new AbortController();
+      let instance,expired=false;const controller=new AbortController(),activity={},received=new Map();
+      const progress=value=>{if(expired)return;const key=value.asset||'wasm',bytes=value.transferBytes??value.bytes;if(Number.isFinite(bytes)&&bytes>(received.get(key)||0)){received.set(key,bytes);activity.touch?.();}onProgress(value);};
       try{
         onProgress({label:attempt?'正在自动重建解码引擎':'正在准备本地解码引擎'});
-        const factory=Promise.resolve().then(()=>this.factory({attempt,signal:controller.signal,onProgress,nonce:globalThis.crypto?.randomUUID?.()||String(Date.now())+'-'+attempt})).then(value=>{if(expired){this.reset(value);throw unavailable('解码文件加载超时，稍后自动继续。','assets','timeout');}return value;});
-        instance=await deadline(factory,this.factoryTimeout,'解码文件加载',()=>{expired=true;controller.abort();});
+        const factory=Promise.resolve().then(()=>this.factory({attempt,signal:controller.signal,onProgress:progress,nonce:globalThis.crypto?.randomUUID?.()||String(Date.now())+'-'+attempt})).then(value=>{if(expired){this.reset(value);throw unavailable('解码文件加载超时，稍后自动继续。','assets','timeout');}return value;});
+        instance=await deadline(factory,this.factoryTimeout,'解码文件加载',()=>{expired=true;controller.abort();},activity,this.factoryMaxTime);
         onProgress({label:'正在启动本地解码进程'});
         await deadline(instance.load(),this.loadTimeout,'解码引擎初始化',()=>this.reset(instance));
         this.failure=null;this.retryAt=0;return this.instance=instance;

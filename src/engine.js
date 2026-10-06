@@ -1,5 +1,6 @@
 import {ORIGINS,DIMENSIONS,now,uid,sha256,redact,nested,classifyHTTP,friendlyError,validateJob,requestPrompt,recordEvent} from './core.js';
 import {revisionProblem,revisedJob,revisionStamp} from './job-revision.js';
+import {reviewProblem,reviewChanges,reviewStamp} from './content-review.js';
 import {promptSpec} from './prompt-spec.js';
 import {MODEL_PROFILES,modelProfile} from './models.js';
 import {submissionCooldown,cooldownMessage} from './submission-policy.js';
@@ -130,6 +131,24 @@ export class Runner {
   }
   async persist(disk=false){const {project,folder}=this.context();await saveProject(project,folder,{requireDisk:disk});if(folder&&await permitted(folder))await writeFile(folder,'X-AI_制作过程与结果.md',reportMarkdown(project));this.onChange();}
   event(kind,msg,id){recordEvent(this.context().project,kind,msg,id);}
+  async review(job,{decision,reason='',expectedStamp}={}){
+    this.reviewing??=new Set();const context=()=>({...this,revisionDraft:this.context().project.revisionDraft});
+    if(this.reviewing.has(job.uid))throw Error('正在保存此任务的审核结果，请稍候。');
+    const stamp=reviewStamp(job),problem=reviewProblem(job,context());if(problem)throw Error(problem);
+    if(expectedStamp&&stamp!==expectedStamp)throw Error('当前视频或审核状态已变化，请重新打开任务后审核。');
+    this.reviewing.add(job.uid);
+    try{
+      const {project,folder}=this.context();if(!await permitted(folder))throw Error('审核结果尚未保存，请重新授权输出文件夹后重试。');
+      const changed=reviewProblem(job,context());if(changed||reviewStamp(job)!==stamp)throw Error(changed||'当前视频或审核状态已变化，请重新打开任务后审核。');
+      const patch=reviewChanges(job,decision,reason),before=Object.fromEntries(Object.keys(patch).map(k=>[k,{had:Object.hasOwn(job,k),value:job[k]}]));
+      Object.assign(job,patch);const eventsBefore=project.events.length;this.event(decision==='approved'?'human_approved':'human_rejected',decision==='approved'?`用户确认V${job.current.number}内容审核通过${patch.state==='approved'?'':'；技术结果保留，仍待处理'}`:String(reason).trim(),job.id);const added=project.events.slice(eventsBefore);
+      try{await this.persist(true);}catch(error){
+        for(const [key,old]of Object.entries(before))if(old.had)job[key]=old.value;else delete job[key];
+        project.events=project.events.filter(e=>!added.includes(e));await saveProject(project,folder).catch(()=>{});this.onChange();throw error;
+      }
+      return {decision,state:job.state,technicalPassed:job.state==='approved'};
+    }finally{this.reviewing.delete(job.uid);}
+  }
   async setPaused(paused){
     const p=this.context().project;p.queueControl={...p.queueControl,paused,updatedAt:now()};this.pauseNew=paused;await this.persist();
   }
@@ -280,19 +299,20 @@ export class Runner {
     catch(error){if(autoDownload&&error.name!=='LocalCheckUnavailable'&&(error instanceof ConnectionError||error.name==='CorruptDownload'||/视频.*(加载|解码|元数据)/.test(error.message))){attempt.discardedDownload={at:now(),path:attempt.rawPath,sha256:incomingHash,bytes:file.size};delete attempt.rawBlobKey;delete attempt.rawPath;delete attempt.rawSha256;delete attempt.downloadCompleteAt;throw error instanceof ConnectionError?error:new ConnectionError('media','local',{name:'CorruptDownload'});}throw error;}
     const samples=qa.samples,playbackFile=qa.playbackFile||file;delete qa.samples;delete qa.playbackFile;attempt.qa=qa;attempt.sha256=await sha256(playbackFile);attempt.bytes=playbackFile.size;if(qa.normalization)attempt.playbackSource={path:attempt.rawPath,sha256:incomingHash,bytes:file.size,transform:qa.normalization};else delete attempt.playbackSource;attempt.path=`clips/${job.episode}/${job.id}_v${attempt.number}${suffix}.mp4`;attempt.blobKey='clip:'+job.uid+':'+attempt.number+suffix;activity({kind:'save',label:'正在保存视频、抽帧与核验记录'});await storeBlob(attempt.blobKey,playbackFile);await writeFile(folder,attempt.path,playbackFile);
     if(samples){attempt.frameDirectory=`checks/${job.id}_v${attempt.number}${suffix}`;attempt.frameKeys=[];for(let i=0;i<samples.frames.length;i++){const key=`frame:${job.uid}:${attempt.number}${suffix}:${i}`;await storeBlob(key,samples.frames[i]);attempt.frameKeys.push(key);await writeFile(folder,`${attempt.frameDirectory}/frame_${i+1}.jpg`,samples.frames[i]);}attempt.lastFrameKey=`last:${job.uid}:${attempt.number}${suffix}`;await storeBlob(attempt.lastFrameKey,samples.last);attempt.lastFramePath=`${attempt.frameDirectory}/last.png`;attempt.lastFrameSha256=await sha256(samples.last);await writeFile(folder,attempt.lastFramePath,samples.last);}
-    delete attempt.lastProblem;delete attempt.localCheckRetryAt;delete attempt.replacingDownload;attempt.resolved=true;attempt.downloadedAt=now();job.current=JSON.parse(JSON.stringify(attempt));job.state=qa.fatal.length?'needs_redo':qa.technical==='passed'?'ready':'blocked';job.review='pending';job.error=qa.fatal.join('；')|| (qa.technical==='partial'?'尚未完成深度校验，请重试校验。':null);
+    delete attempt.lastProblem;delete attempt.localCheckRetryAt;delete attempt.replacingDownload;attempt.resolved=true;attempt.downloadedAt=now();job.current=JSON.parse(JSON.stringify(attempt));job.state=qa.fatal.length?'needs_redo':qa.technical==='passed'?'ready':'blocked';job.review='pending';delete job.reviewVersion;delete job.reviewedAt;job.error=qa.fatal.join('；')|| (qa.technical==='partial'?'尚未完成深度校验，请重试校验。':null);
     await writeFile(folder,`checks/${job.id}_v${attempt.number}${suffix}/report.json`,JSON.stringify(qa,null,2));this.event('checked',`${job.state}；${qa.fatal.join('；')} ${qa.warnings.join('；')}`,job.id);await this.persist(true);
   }
   async retryDownload(job){const a=job.attempts.at(-1);if(!a?.url)throw Error('没有下载地址，请先查询原任务。');if(a.videoId&&a.resolved)a.remoteReleasedAt=a.remoteReleasedAt||a.downloadedAt||now();a.forceDownload=true;job.state='download';job.error=null;await this.persist();return this.start();}
   async resumeKnown(job){const a=job.attempts.at(-1);if(!a?.videoId)throw Error('请先绑定原video_id。');if(a.terminalConfirmed)throw Error('服务端已确认终止，请在详情中修订为新版本。');job.state='queued';job.error=null;await this.persist();return this.start();}
   async redo(job,prompt,dialogue,reason,changes={},expectedStamp=null){
+    if(this.reviewing?.has(job.uid))throw Error('正在保存此任务的审核结果，请稍候。');
     if(this.activeUid===job.uid||this.localChecks.has(job.uid))throw Error('此任务正在处理，请继续原任务。');
     const stamp=revisionStamp(job);if(expectedStamp&&stamp!==expectedStamp)throw Error('原任务状态已变化，请重新打开原任务后修订。');
     const candidate=revisedJob(job,{...changes,prompt,dialogue});
     await this.payload(candidate); // Read fresh source bytes and verify their hashes before queue intake.
-    if(this.activeUid===job.uid||this.localChecks.has(job.uid)||revisionStamp(job)!==stamp||revisionProblem(job))throw Error('原任务状态已变化，请重新打开原任务后修订。');
+    if(this.reviewing?.has(job.uid)||this.activeUid===job.uid||this.localChecks.has(job.uid)||revisionStamp(job)!==stamp||revisionProblem(job))throw Error('原任务状态已变化，请重新打开原任务后修订。');
     const {project,folder}=this.context(),before=structuredClone(job),session=project.revisionDraft;
-    delete job.promptSeconds;delete job.sourceOriginalPrompt;
+    delete job.promptSeconds;delete job.sourceOriginalPrompt;delete job.reviewVersion;delete job.reviewedAt;
     Object.assign(job,candidate,{revisionReason:reason,review:'pending',error:null,current:null,state:'pending',autoSubmit:changes.autoSubmit??true,updatedAt:now()});
     if(job.attempts.at(-1))job.attempts=job.attempts.map((a,i)=>i===job.attempts.length-1?{...a,resolved:true}:a);
     const commitProject={...project};delete commitProject.revisionDraft;

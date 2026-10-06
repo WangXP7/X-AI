@@ -1,0 +1,9 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {reviewProblem,reviewChanges,reviewStamp} from '../src/content-review.js';
+const job=()=>({uid:'review-me',state:'ready',review:'pending',current:{number:2,sha256:'a'.repeat(64),qa:{technical:'passed',fullDecode:'passed',fatal:[]}},attempts:[{number:2,videoId:'original-id',resolved:true}]});
+test('a different active task cannot block content review',()=>{assert.equal(reviewProblem(job(),{activeUid:'other',localChecks:new Map([['other',{}]])}),'');});
+test('processing, unresolved remote submission and revision of this task block review',()=>{const j=job();assert.match(reviewProblem(j,{localChecks:new Map([[j.uid,{}]])}),/此任务/);assert.match(reviewProblem(j,{revisionDraft:{jobUid:j.uid}}),/修订/);j.attempts[0].resolved=false;assert.match(reviewProblem(j),/处理/);});
+test('content approval does not override failed technical QA or modify attempt history',()=>{const j=job();j.state='needs_redo';j.current.qa.technical='failed';j.current.qa.fatal=['resolution failed'];const before=structuredClone(j),patch=reviewChanges(j,'approved');assert.equal(patch.review,'approved');assert.equal(patch.state,'needs_redo');assert.equal(patch.error,'resolution failed');assert.deepEqual(patch.reviewVersion,{number:2,sha256:'a'.repeat(64)});assert.deepEqual(j,before);});
+test('approval after full technical success completes review; rejection needs a reason',()=>{assert.equal(reviewChanges(job(),'approved').state,'approved');assert.throws(()=>reviewChanges(job(),'rejected',' '),/原因/);assert.equal(reviewChanges(job(),'rejected','wrong dialogue').state,'needs_redo');const j=job();j.current.qa.fullDecode='partial';assert.equal(reviewChanges(j,'approved').state,'blocked');});
+test('review stamp changes when the current file or QA changes',()=>{const j=job(),before=reviewStamp(j);j.current.number++;assert.notEqual(reviewStamp(j),before);});

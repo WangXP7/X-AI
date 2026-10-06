@@ -41,3 +41,18 @@ test('queued media reports waiting separately from decoder startup',async()=>{
   const first=queue.run(()=>new Promise(r=>release=r));const second=queue.run(()=>2,{onProgress:p=>phases.push(p.label)});
   await new Promise(r=>setTimeout(r,0));release(1);assert.deepEqual(await Promise.all([first,second]),[1,2]);assert.match(phases[0],/前方还有 1 项/);
 });
+
+test('actual new bytes keep a slow factory alive beyond the former total deadline',async()=>{
+  let made=0;const queue=new MediaEngineQueue(async({onProgress})=>{made++;for(let bytes=1;bytes<=8;bytes++){await new Promise(r=>setTimeout(r,8));onProgress({asset:'wasm',bytes});}return {load:async()=>{},terminate(){}};},{factoryTimeout:25,factoryMaxTime:500});
+  const start=Date.now();assert.equal(await queue.run(()=>42),42);assert.ok(Date.now()-start>25);assert.equal(made,1);
+});
+
+test('repeated labels or unchanged byte counts do not hide a stalled download',async()=>{
+  const timers=[];const queue=new MediaEngineQueue(({onProgress,signal})=>new Promise(()=>{onProgress({bytes:1});const timer=setInterval(()=>onProgress({label:'still loading',bytes:1}),4);timers.push(timer);signal.addEventListener('abort',()=>clearInterval(timer));}),{factoryTimeout:20,retryDelay:0});
+  try{await assert.rejects(queue.run(()=>true),e=>e.decoderDiagnostic.code==='timeout');assert.equal(queue.pending,0);}finally{timers.forEach(clearInterval);}
+});
+
+test('overall safety limit still aborts a factory emitting new bytes forever',async()=>{
+  const queue=new MediaEngineQueue(({onProgress,signal})=>new Promise(()=>{let bytes=0;const timer=setInterval(()=>onProgress({bytes:++bytes}),4);signal.addEventListener('abort',()=>clearInterval(timer));}),{factoryTimeout:20,factoryMaxTime:45,retryDelay:0});
+  await assert.rejects(queue.run(()=>true),e=>e.decoderDiagnostic.code==='timeout');assert.equal(queue.pending,0);
+});

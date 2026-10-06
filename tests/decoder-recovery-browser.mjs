@@ -21,6 +21,7 @@ async function routes(context,{fault,blockEngine=false,failures=1}={}){
     }
     const file=resolve(root,path);if(!file.startsWith(root+sep)||path.startsWith('private/')||path.startsWith('.'))return r.fulfill({status:404});
     const types={html:'text/html',js:'text/javascript',css:'text/css',json:'application/json',svg:'image/svg+xml',wasm:'application/wasm'};
+    if(kind==='wasm'&&r.request().headers().range){const bytes=await readFile(file),[,start,end]=/^bytes=(\d+)-(\d+)$/.exec(r.request().headers().range);return r.fulfill({status:206,body:bytes.subarray(+start,+end+1),contentType:'application/wasm',headers:{'Content-Range':`bytes ${start}-${end}/${bytes.length}`}});}
     try{return r.fulfill({body:await readFile(file),contentType:types[file.split('.').at(-1)]||'application/octet-stream'});}catch{return r.fulfill({status:404});}
   });return requests;
 }
@@ -33,7 +34,7 @@ try{
   for(const fault of ['core','wasm','worker']){
     const context=await browser.newContext(),requests=await routes(context,{fault}),page=await ready(context);
     const report=await page.evaluate(async()=>{const {deepCheck}=await import('./src/media.js'),file=await(await fetch('./__fixture.mp4')).blob(),start=Date.now(),phases=[];const result=await deepCheck(file,p=>{if(phases.at(-1)!==p.label)phases.push(p.label);});return {origin:location.origin,elapsedMs:Date.now()-start,result,phases};});
-    assert.equal(report.result.fullDecode,'passed');assert.equal(requests[fault].length,2);assert.notEqual(...requests[fault]);assert.ok(report.elapsedMs<30000,'reported startup error must not wait for timeout');assert.ok(report.phases.some(x=>/自动重建/.test(x)));reports.push({fault,...report,requests});await context.close();
+    assert.equal(report.result.fullDecode,'passed');assert.ok(requests[fault].length>=2);assert.notEqual(requests[fault][0],requests[fault][1]);assert.ok(report.elapsedMs<30000,'reported startup error must not wait for timeout');assert.ok(report.phases.some(x=>/自动重建/.test(x)));reports.push({fault,...report,requests});await context.close();
   }
   // Cache storage is optional: failure to cache must not make the engine unusable.
   const noCache=await browser.newContext();await noCache.addInitScript(()=>{Object.defineProperty(window,'caches',{get(){throw new DOMException('cache disabled','SecurityError');}});});await routes(noCache);const noCachePage=await ready(noCache);
@@ -75,5 +76,5 @@ try{
   assert.equal(active.requests.core.length,0);assert.equal(active.requests.wasm.length,0);assert.equal(active.requests.worker.length,1);
   for(let i=0;i<3;i++){assert.equal(after[i].sha256,before[i].sha256);assert.equal(after[i].uid,before[i].uid);assert.equal(after[i].videoId,before[i].videoId);assert.equal(after[i].attempts,1);assert.equal(after[i].fullDecode,'passed');}
   reports.push({coldBrowserRestart:{before,after,elapsedMs:Date.now()-restartAt,requests:active.requests,engineNetworkBlocked:true}});
-  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);await writeFile('test-results/decoder-recovery-v1211-results.json',JSON.stringify({source,checks:reports,errors,external},null,2));console.log(JSON.stringify({passed:reports.length,checks:reports,errors,external},null,2));
+  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);await writeFile('test-results/decoder-recovery-v1212-results.json',JSON.stringify({source,checks:reports,errors,external},null,2));console.log(JSON.stringify({passed:reports.length,errors,external},null,2));
 }finally{await active?.c.close();}

@@ -25,6 +25,7 @@ export function taskProblem(job){
 
 export function taskStatus(job){
   const a=job.attempts?.at(-1);
+  if(job.review==='approved'&&job.current&&['needs_redo','blocked'].includes(job.state))return '内容已通过 · 技术待处理';
   if(job.state==='checking'&&a?.downloadCompleteAt)return '已下载 · 后台校验中';
   if(job.state==='download'&&a?.downloadWaitingFor)return '已生成 · 等待下载通道';
   if(job.state==='download'&&a?.downloadRecovery)return '已生成 · 自动下载中';

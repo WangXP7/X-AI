@@ -39,19 +39,19 @@ try{
     sections:document.querySelectorAll('h3').length,scripts:document.scripts.length,
     missing:[...document.querySelectorAll('a[href^="#"]')].filter(a=>!document.getElementById(a.hash.slice(1))).length,
     overflow:document.documentElement.scrollWidth>innerWidth}));
-  assert.ok(reading.title.includes(version));assert.equal(reading.chapters,47);
+  assert.ok(reading.title.includes(version));assert.equal(reading.chapters,48);
   assert.equal(reading.missing,0);assert.equal(reading.scripts,0);assert.equal(reading.overflow,false);
   await doc.locator('.reader-nav a.level-2').last().click();
   await doc.locator('h2').last().evaluate(element=>element.scrollIntoView({behavior:'instant',block:'start'}));
-  await doc.screenshot({path:'test-results/design-v1211-desktop.png'});
+  await doc.screenshot({path:'test-results/design-v1212-desktop.png'});
   await doc.setViewportSize({width:390,height:844});
-  await doc.locator('h3').filter({hasText:'46.1 现场证据与ChatGPT关系'}).evaluate(element=>element.scrollIntoView({behavior:'instant',block:'start'}));
+  await doc.locator('h3').filter({hasText:'47.1 现场证据与明确根因'}).evaluate(element=>element.scrollIntoView({behavior:'instant',block:'start'}));
   assert.equal(await doc.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-  await doc.screenshot({path:'test-results/design-v1211-mobile.png'});
+  await doc.screenshot({path:'test-results/design-v1212-mobile.png'});
   assert.deepEqual(docErrors,[]);assert.deepEqual(docRequests,[]);
   const result={at:new Date().toISOString(),version,url:base,serverPid:identity.pid,
     app:{ready:true,desktopOverflow:false,mobileOverflow:false,errors,externalRequests:unexpected},
     document:{...reading,mobileOverflow:false,errors:docErrors,externalRequests:docRequests}};
-  await writeFile('test-results/startup-v1211-results.json',JSON.stringify(result,null,2));
+  await writeFile('test-results/startup-v1212-results.json',JSON.stringify(result,null,2));
   console.log(JSON.stringify(result,null,2));
 }finally{await browser.close();}

@@ -6,9 +6,10 @@ import {revisionProblem,revisionStamp,revisionDraft,revisedJob,revisionReplaceme
 import {inspectQueue} from '../src/queue-health.js';
 const base={id:'S26',episode:'EP01',prompt:'根据分镜，生成视频',seconds:12,mode:'reference',aspect:'16:9',assetIds:['original'],seed:12,dialogue:'角色：你好'};
 test('repair reuses job identity, settings and historical submission snapshot',()=>{
-  const j=newJob(base);j.state='invalid';j.attempts=[{number:1,submittedAt:new Date().toISOString(),rejectedBeforeCreation:true,snapshot:structuredClone(base)}];
+  const j=newJob(base);j.state='invalid';j.reviewVersion={number:1,sha256:'a'.repeat(64)};j.reviewedAt=new Date().toISOString();j.attempts=[{number:1,submittedAt:new Date().toISOString(),rejectedBeforeCreation:true,snapshot:structuredClone(base)}];
   const history=JSON.stringify(j.attempts),fixed=revisedJob(j,{id:'NEW',uid:'NEW',episode:'OTHER',prompt:'时长4秒，调整动作',assetIds:['reuploaded']});
   assert.equal(revisionProblem(j),'');assert.equal(fixed.uid,j.uid);assert.equal(fixed.id,'S26');assert.equal(fixed.episode,'EP01');assert.equal(fixed.seed,12);assert.equal(fixed.seconds,4);assert.deepEqual(fixed.assetIds,['reuploaded']);assert.equal(JSON.stringify(j.attempts),history);
+  assert.equal(fixed.reviewVersion,undefined);assert.equal(fixed.reviewedAt,undefined);assert.equal(j.reviewVersion.number,1);
 });
 test('unknown paid requests cannot be repaired into a new submission, even under a stale invalid label',()=>{
   for(const state of ['unknown','submitting','invalid','pending','failed']){const j=newJob(base);j.state=state;j.attempts=[{number:1,submittedAt:new Date().toISOString()}];assert.ok(revisionProblem(j));assert.throws(()=>revisedJob(j,{prompt:'new'}));}

@@ -17,7 +17,7 @@ export function revisedJob(job,changes){
   const problem=revisionProblem(job);if(problem)throw Error(problem);
   const fields=['prompt','dialogue','seconds','aspect','mode','profileId','seed','assetIds','firstFrame','lastFrame'];
   const candidate={...job,...Object.fromEntries(fields.filter(k=>Object.hasOwn(changes,k)).map(k=>[k,changes[k]]))};
-  delete candidate.promptSeconds;delete candidate.sourceOriginalPrompt;
+  delete candidate.promptSeconds;delete candidate.sourceOriginalPrompt;delete candidate.reviewVersion;delete candidate.reviewedAt;
   if(candidate.prompt!==job.prompt){candidate.textSources=(job.textSources||[]).filter(s=>s.field!=='prompt');candidate.referenceReplacements=[];}
   return promptSpec(candidate);
 }
