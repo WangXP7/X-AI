@@ -122,6 +122,9 @@ export function validateProjectFile(p){
     }if(!studioIDs.has(p.activeStudioId)||p.jobs.some(j=>j.studioId&&!studioIDs.has(j.studioId)))fail();
   }
   if(p.queueControl!==undefined&&(!p.queueControl||typeof p.queueControl.paused!=='boolean'))fail();
+  if(p.revisionDraft!==undefined){const r=p.revisionDraft,d=r?.draft;
+    if(!r||!p.jobs.some(j=>j.uid===r.jobUid)||!p.studios?.some(s=>s.id===r.studioId)||!p.studios.some(s=>s.id===r.returnStudioId)||typeof r.stamp!=='string'||r.stamp.length>100000||!d||d.batchMode!==false||!['single','pavo'].includes(d.creationMode)||!d.fields||typeof d.fields!=='object'||Array.isArray(d.fields)||Object.values(d.fields).some(v=>typeof v!=='string'||v.length>100000)||['selected','batchSelected','pavoSelected'].some(k=>!Array.isArray(d[k])||d[k].some(id=>!p.assets.some(a=>a.id===id))))fail();
+  }
   const ids=new Set(),uids=new Set(),assetIDs=new Set();let active=0;
   for(const j of p.jobs){if(!safeID(j.id)||!safeID(j.uid)||!safeID(j.episode)||ids.has(j.id)||uids.has(j.uid)||!Object.hasOwn(LABELS,j.state)||typeof j.prompt!=='string'||!Array.isArray(j.assetIds)||!Array.isArray(j.attempts)||!requestDurationValid(j.seconds,j.profileId,j.mode)||!DIMENSIONS[j.aspect]||!['text','reference','keyframe'].includes(j.mode))fail();ids.add(j.id);uids.add(j.uid);
     if(j.autoSubmit!==undefined&&typeof j.autoSubmit!=='boolean')fail();

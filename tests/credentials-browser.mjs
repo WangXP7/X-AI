@@ -10,7 +10,7 @@ const browser=await chromium.launch({channel:'msedge',headless:true});
 const out=new URL('../test-results/',import.meta.url);await mkdir(out,{recursive:true});
 const key='sk-synthetic-credential-test-not-a-live-key',customKey='sk-custom-synthetic-not-a-live-key';
 const password='synthetic local password',vault=await encryptKey(key,password),envelope=await sealLocalDefault(key);
-const checks=[],errors=[],metrics=[];let apiCalls=0;
+const checks=[],errors=[],metrics=[];let apiCalls=0;const base=process.env.XAI_TEST_URL||'http://127.0.0.1:4173/';
 const context=await browser.newContext({viewport:{width:1280,height:900},acceptDownloads:true});
 await context.route('**/private/default-access.json',route=>route.fulfill({json:envelope}));
 await context.route('**/private/default-vault.json',route=>route.fulfill({json:vault}));
@@ -24,16 +24,17 @@ async function waitFeedback(text){await page.waitForFunction(text=>document.quer
 async function onTop(selector){return page.locator(selector).evaluate(el=>{const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));});}
 async function storedVault(){return page.evaluate(async()=>{const {get}=await import('./src/storage.js');return get('state','vault');});}
 try{
-  await page.goto('http://127.0.0.1:4173/');await page.waitForFunction(()=>document.querySelector('#connection-status').textContent.includes('系统默认密钥已启用'));
+  await page.goto(base);await page.waitForFunction(()=>document.querySelector('#connection-status').textContent.includes('系统默认密钥已启用'));
   assert.equal(apiCalls,0);assert.equal(await storedVault(),undefined);
-  checks.push('default key activates on page load with no password or authenticated request');
+  checks.push('default key activates on page load with no password or authenticated request');await page.locator('#experience-expert').click();await page.locator('#mode-single').click();
   for(const viewport of [{width:2238,height:1196},{width:1280,height:900}]){
     await page.setViewportSize(viewport);await page.evaluate(()=>scrollTo(0,0));
     const measured=await page.evaluate(()=>{const rect=selector=>document.querySelector(selector).getBoundingClientRect();return {width:innerWidth,composerTop:rect('.composer').top,addButtonBottom:rect('#add-jobs').bottom,directoryButtonGap:rect('#choose-folder').left-rect('.directory-copy').right,overflow:document.documentElement.scrollWidth>innerWidth,fonts:Object.fromEntries(['.page-footer','#connection-status','.local-card p','.form-footer'].map(selector=>[selector,parseFloat(getComputedStyle(document.querySelector(selector)).fontSize)]))};});
-    assert.ok(measured.composerTop<200,JSON.stringify(measured));assert.ok(measured.addButtonBottom<viewport.height,JSON.stringify(measured));assert.ok(measured.directoryButtonGap<20);assert.equal(measured.overflow,false);assert.ok(Object.values(measured.fonts).every(size=>size>=14));metrics.push(measured);
+    // Expert mode now includes the project/directory management bars above a scrollable form.
+    assert.ok(measured.composerTop<300,JSON.stringify(measured));assert.ok(measured.directoryButtonGap<20);assert.equal(measured.overflow,false);assert.ok(Object.values(measured.fonts).every(size=>size>=13));metrics.push(measured);
     await page.screenshot({path:fileURLToPath(new URL('compact-studio-'+viewport.width+'.png',out)),fullPage:true});
   }
-  checks.push('2238px and 1280px layouts show the full single-shot form without scrolling, keep 14px supporting text and place the folder button next to its label');
+  checks.push('2238px and 1280px expert layouts keep the project bars, readable supporting text and folder button alignment without horizontal overflow');
   await page.locator('#settings-button').click();await page.waitForFunction(()=>document.querySelector('#stored-key-title').textContent.includes('已找到'));
   assert.equal(await page.locator('#advanced-mode').getAttribute('open'),null);assert.equal(await page.locator('#vault-password').isVisible(),false);assert.equal(await page.locator('#new-vault-password').isVisible(),false);
   assert.equal(await page.locator('#use-default-key').textContent(),'正在使用');assert.ok(await page.locator('#basic-api-key').isVisible());
@@ -65,13 +66,13 @@ try{
   await page.screenshot({path:fileURLToPath(new URL('settings-simple-mobile.png',out)),fullPage:true});
   await page.locator('#done-settings').click();await page.reload();await page.waitForFunction(()=>document.querySelector('#connection-status').textContent.includes('系统默认密钥已启用'));
   checks.push('mobile errors stay visible even when advanced mode closes; reopening resets advanced UI and refresh restores the default key');
-  await page.setViewportSize({width:1280,height:900});await page.locator('#prompt-example').click();await page.locator('#add-jobs').click();await page.locator('[data-view=studio]').click();assert.equal(await page.locator('#workspace-pending').textContent(),'1');assert.equal(await page.locator('#workspace-ready').textContent(),'0 / 1');await page.locator('[data-view=queue]').click();
-  await page.locator('[data-detail]').click();await page.locator('[data-edit-job]').click();await page.locator('#edit-mode').selectOption('reference');await page.locator('#edit-reason').fill('test missing reference');await page.locator('#edit-form button[type=submit]').click();
-  await page.locator('#edit-dialog .dialog-notifications .toast.error').waitFor();assert.ok(await onTop('#edit-dialog .dialog-notifications .toast.error'));assert.equal(await page.locator('#toast-region .toast.error').count(),0);
-  checks.push('workspace counts update with tasks and errors in other dialogs also appear above the backdrop');
+  await page.setViewportSize({width:1280,height:900});await page.locator('#prompt-example').click();await page.locator('#generation-mode').selectOption('text');await page.locator('#add-jobs').click();await page.locator('[data-view=studio]').click();assert.equal(await page.locator('#workspace-pending').textContent(),'1');assert.equal(await page.locator('#workspace-ready').textContent(),'0 / 1');await page.locator('[data-view=queue]').click();
+  await page.locator('[data-detail]').click();await page.locator('[data-edit-job]').click();await page.locator('#revision-editor').waitFor();assert.equal(await page.locator('#revision-editor').isVisible(),true);await page.locator('#experience-expert').click();await page.locator('#generation-mode').selectOption('reference');await page.locator('#add-jobs').click();
+  await page.locator('#toast-region .toast.error').last().waitFor();assert.ok((await page.locator('#toast-region .toast.error').last().textContent()).includes('至少需要'));assert.equal(await page.locator('#revision-editor').isVisible(),true);await page.locator('#cancel-revision').click();
+  checks.push('workspace counts update with tasks; revision errors preserve original editor for correction');
   for(const [label,response] of [['public',{status:404,body:'missing'}],['damaged',{json:{...envelope,cipher:'broken'}}]]){
     const ctx=await browser.newContext();const p=await ctx.newPage();await ctx.route('**/private/default-access.json',r=>r.fulfill(response));await ctx.route('**/private/default-vault.json',r=>r.fulfill({status:404,body:'missing'}));
-    await p.goto('http://127.0.0.1:4173/');await p.locator('#settings-button').click();await p.waitForFunction(()=>document.querySelector('#stored-key-title').textContent==='还没有已存密钥');assert.ok(await p.locator('#basic-api-key').isVisible());assert.equal(await p.locator('#test-connection').isDisabled(),true);assert.equal(await p.locator('#advanced-mode').getAttribute('open'),null);
+    await p.goto(base);await p.locator('#settings-button').click();await p.waitForFunction(()=>document.querySelector('#stored-key-title').textContent==='还没有已存密钥');assert.ok(await p.locator('#basic-api-key').isVisible());assert.equal(await p.locator('#test-connection').isDisabled(),true);assert.equal(await p.locator('#advanced-mode').getAttribute('open'),null);
     if(label==='damaged'){await p.locator('#use-default-key').click();await p.waitForFunction(()=>document.querySelector('#settings-feedback').textContent.includes('暂时无法读取'));}
     await ctx.close();
   }

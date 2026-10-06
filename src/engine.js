@@ -1,4 +1,5 @@
 import {ORIGINS,DIMENSIONS,now,uid,sha256,redact,nested,classifyHTTP,friendlyError,validateJob,requestPrompt,recordEvent} from './core.js';
+import {revisionProblem,revisedJob,revisionStamp} from './job-revision.js';
 import {promptSpec} from './prompt-spec.js';
 import {MODEL_PROFILES,modelProfile} from './models.js';
 import {submissionCooldown,cooldownMessage} from './submission-policy.js';
@@ -151,8 +152,8 @@ export class Runner {
         if(!file){const a=job.attempts.at(-1);try{file=await blob(a.rawBlobKey);}catch{file=await readFile(this.context().folder,a.rawPath);}}
         await this.acceptFile(job,file,job.attempts.at(-1),{autoDownload:true,background:true});
       }catch(error){
-        const a=job.attempts.at(-1);a.lastProblem=networkRecord(error)||{at:now(),operation:'local',code:error.name,message:friendlyError(error)};
-        if(error.name==='LocalCheckUnavailable'){a.localCheckFailures=(a.localCheckFailures||0)+1;a.localCheckRetryAt=Date.now()+30000;job.state='checking';job.error=null;}
+        const a=job.attempts.at(-1);a.lastProblem=networkRecord(error)||{at:now(),operation:'local',code:error.name,message:friendlyError(error),...(error.decoderDiagnostic?{decoder:error.decoderDiagnostic}:{})};
+        if(error.name==='LocalCheckUnavailable'){a.localCheckFailures=(a.localCheckFailures||0)+1;a.localCheckRetryAt=Math.max(Date.now()+30000,error.retryAt||0);if(error.decoderDiagnostic){(a.localCheckErrors??=[]).push({...error.decoderDiagnostic,version:APP_VERSION,retryAt:a.localCheckRetryAt});a.localCheckErrors=a.localCheckErrors.slice(-20);}job.state='checking';job.error=null;}
         else if(error instanceof ConnectionError&&error.operation==='media'){a.downloadRecovery=true;a.downloadRetryAt=Date.now()+downloadDelay((a.downloadFailures=(a.downloadFailures||0)+1));job.state='download';job.error=null;}
         else{job.state='blocked';job.error=friendlyError(error);}
         this.event('background_check_recovery',friendlyError(error),job.id);await this.persist().catch(()=>{});
@@ -168,7 +169,7 @@ export class Runner {
     if(this.refreshing||this.assembling)throw Error('正在刷新或拼接，请等待当前操作完成。');
     this.starting=true;
     try{
-      if(!this.transport.key&&!this.context().project.jobs.some(j=>['download','checking'].includes(j.state)&&j.attempts.at(-1)?.url))throw Error('请先解锁密钥。');
+      if(!this.transport.key&&!this.context().project.jobs.some(j=>['download','checking'].includes(j.state)&&(downloadSaved(j)||j.attempts.at(-1)?.url)))throw Error('请先解锁密钥。');
       if(!await permitted(this.context().folder))throw Error('请先选择或重新授权本地文件夹。');
       if(!automatic)await this.setPaused(false);else this.pauseNew=!!this.context().project.queueControl?.paused;
     }catch(error){this.starting=false;throw error;}
@@ -177,9 +178,9 @@ export class Runner {
       while(true){const p=this.context().project;
         for(const local of p.jobs.filter(j=>(j.state==='checking'&&downloadSaved(j)||j.state==='download'&&(downloadSaved(j)||j.attempts.at(-1)?.remoteReleasedAt))&&!this.localChecks.has(j.uid)))this.launchLocalCheck(local);
         if(p.jobs.some(unresolvedSubmission))throw Error('有提交结果待核实的任务。原请求已保留，不能重复生成。');
-        let job=p.jobs.find(j=>(['queued','generating','download','checking','blocked','deferred','submitting','unknown'].includes(j.state)||j.state==='pending'&&j.attempts.at(-1)?.videoId)&&remoteBlocks(j)&&!this.localChecks.has(j.uid));
+        let job=p.jobs.find(j=>j.uid!==p.revisionDraft?.jobUid&&(['queued','generating','download','checking','blocked','deferred','submitting','unknown'].includes(j.state)||j.state==='pending'&&j.attempts.at(-1)?.videoId)&&remoteBlocks(j)&&!this.localChecks.has(j.uid));
         if(job&&['pending','submitting','unknown'].includes(job.state)&&job.attempts.at(-1)?.videoId){job.state='queued';await this.persist(true);}
-        if(!job&&!this.pauseNew&&this.transport.key)job=p.jobs.find(j=>j.state==='pending'&&(this.runAll||j.autoSubmit||this.allowedUids.has(j.uid))&&(!j.continuityFrom||p.jobs.some(prev=>prev.id===j.continuityFrom&&['ready','approved'].includes(prev.state)&&prev.current?.lastFrameKey)));
+        if(!job&&!this.pauseNew&&this.transport.key)job=p.jobs.find(j=>j.uid!==p.revisionDraft?.jobUid&&j.state==='pending'&&(this.runAll||j.autoSubmit||this.allowedUids.has(j.uid))&&(!j.continuityFrom||p.jobs.some(prev=>prev.id===j.continuityFrom&&['ready','approved'].includes(prev.state)&&prev.current?.lastFrameKey)));
         if(!job){if(this.localChecks.size){await Promise.race(this.localChecks.values());continue;}const localRetry=p.jobs.find(j=>j.state==='checking'&&j.attempts.at(-1)?.localCheckRetryAt>Date.now());if(localRetry){this.setActivity({kind:'waiting',label:'本地校验引擎自动恢复，原片已保留',waitUntil:localRetry.attempts.at(-1).localCheckRetryAt});await sleep(1000);continue;}break;}
         if(!this.transport.key&&['pending','deferred','queued','generating'].includes(job.state))break;
         if(this.pauseNew&&job.state==='deferred')break;
@@ -208,7 +209,7 @@ export class Runner {
       if(job.state==='pending'&&attempt.submittedAt&&!attempt.rejectedBeforeCreation){job.state='unknown';job.error='已有未解决的提交记录，请核实原任务后继续。';await this.persist(true);return;}
     }
     if(job.state==='pending'||job.state==='deferred'){
-      if(this.pauseNew)return;await this.beforeNew();let payload;
+      if(this.pauseNew)return;await this.beforeNew();if(this.context().project.revisionDraft?.jobUid===job.uid)return;let payload;
       this.setActivity({kind:'prepare',label:'正在读取并校验本镜素材'});try{payload=await this.payload(job);}catch(e){job.state='invalid';job.error=friendlyError(e);this.event('validation_failed',job.error,job.id);await this.persist();return;}
       if(!attempt||attempt.resolved){attempt={number:job.attempts.length+1,createdAt:now(),reason:job.revisionReason||'首次生成',snapshot:JSON.parse(JSON.stringify({prompt:job.prompt,dialogue:job.dialogue,mode:job.mode,seconds:job.seconds,aspect:job.aspect,assetIds:job.assetIds,firstFrame:job.firstFrame,lastFrame:job.lastFrame,continuityFrom:job.continuityFrom,textSources:job.textSources||[],referenceReplacements:job.referenceReplacements||[]})),request:redact(payload),requestHash:await sha256(JSON.stringify(payload)),inputHashes:[...new Set([...job.assetIds,job.firstFrame,job.lastFrame].filter(Boolean))].map(id=>({id,sha256:this.context().project.assets.find(a=>a.id===id)?.sha256}))};if(job.continuityFrom){const prev=this.context().project.jobs.find(j=>j.id===job.continuityFrom);attempt.continuityInput={shot:prev.id,path:prev.current.lastFramePath,sha256:prev.current.lastFrameSha256,clipSha256:prev.current.sha256};}job.attempts.push(attempt);}
       job.error=null;attempt.preparedAt=now();this.event('submit_prepared','已写入待提交检查点，等待请求间隔',job.id);await this.persist(true);
@@ -275,7 +276,7 @@ export class Runner {
     const incomingHash=await sha256(file);if(!downloadSaved(job)||attempt.rawSha256!==incomingHash)await this.saveDownloaded(job,file,attempt);
     const suffix=attempt.downloadSequence?'_d'+attempt.downloadSequence:'';
     activity({kind:'check',label:'正在检查视频容器与时长'});let qa;
-    try{qa=await inspectVideo(file,job,{deep:true,onProgress:value=>activity({kind:'check',...value})});if(autoDownload&&(qa.fullDecode==='failed'||qa.fatal.some(s=>/MP4容器|过小/.test(s))))throw new ConnectionError('media','local',{name:'CorruptDownload'});if(autoDownload&&qa.technical==='partial'){const failure=new Error('本地解码引擎暂不可用，原片已保留，30秒后自动恢复校验。');failure.name='LocalCheckUnavailable';throw failure;}}
+    try{qa=await inspectVideo(file,job,{deep:true,onProgress:value=>activity({kind:'check',...value})});if(autoDownload&&(qa.fullDecode==='failed'||qa.fatal.some(s=>/MP4容器|过小/.test(s))))throw new ConnectionError('media','local',{name:'CorruptDownload'});if(autoDownload&&qa.technical==='partial'){const failure=new Error('本地解码引擎暂不可用，原片已保留，30秒后自动恢复校验。');failure.name='LocalCheckUnavailable';failure.decoderDiagnostic=qa.decoderDiagnostic;failure.retryAt=qa.retryAt;throw failure;}}
     catch(error){if(autoDownload&&error.name!=='LocalCheckUnavailable'&&(error instanceof ConnectionError||error.name==='CorruptDownload'||/视频.*(加载|解码|元数据)/.test(error.message))){attempt.discardedDownload={at:now(),path:attempt.rawPath,sha256:incomingHash,bytes:file.size};delete attempt.rawBlobKey;delete attempt.rawPath;delete attempt.rawSha256;delete attempt.downloadCompleteAt;throw error instanceof ConnectionError?error:new ConnectionError('media','local',{name:'CorruptDownload'});}throw error;}
     const samples=qa.samples,playbackFile=qa.playbackFile||file;delete qa.samples;delete qa.playbackFile;attempt.qa=qa;attempt.sha256=await sha256(playbackFile);attempt.bytes=playbackFile.size;if(qa.normalization)attempt.playbackSource={path:attempt.rawPath,sha256:incomingHash,bytes:file.size,transform:qa.normalization};else delete attempt.playbackSource;attempt.path=`clips/${job.episode}/${job.id}_v${attempt.number}${suffix}.mp4`;attempt.blobKey='clip:'+job.uid+':'+attempt.number+suffix;activity({kind:'save',label:'正在保存视频、抽帧与核验记录'});await storeBlob(attempt.blobKey,playbackFile);await writeFile(folder,attempt.path,playbackFile);
     if(samples){attempt.frameDirectory=`checks/${job.id}_v${attempt.number}${suffix}`;attempt.frameKeys=[];for(let i=0;i<samples.frames.length;i++){const key=`frame:${job.uid}:${attempt.number}${suffix}:${i}`;await storeBlob(key,samples.frames[i]);attempt.frameKeys.push(key);await writeFile(folder,`${attempt.frameDirectory}/frame_${i+1}.jpg`,samples.frames[i]);}attempt.lastFrameKey=`last:${job.uid}:${attempt.number}${suffix}`;await storeBlob(attempt.lastFrameKey,samples.last);attempt.lastFramePath=`${attempt.frameDirectory}/last.png`;attempt.lastFrameSha256=await sha256(samples.last);await writeFile(folder,attempt.lastFramePath,samples.last);}
@@ -284,7 +285,22 @@ export class Runner {
   }
   async retryDownload(job){const a=job.attempts.at(-1);if(!a?.url)throw Error('没有下载地址，请先查询原任务。');if(a.videoId&&a.resolved)a.remoteReleasedAt=a.remoteReleasedAt||a.downloadedAt||now();a.forceDownload=true;job.state='download';job.error=null;await this.persist();return this.start();}
   async resumeKnown(job){const a=job.attempts.at(-1);if(!a?.videoId)throw Error('请先绑定原video_id。');if(a.terminalConfirmed)throw Error('服务端已确认终止，请在详情中修订为新版本。');job.state='queued';job.error=null;await this.persist();return this.start();}
-  async redo(job,prompt,dialogue,reason,changes={}){const prior=job.attempts.at(-1);if(prior?.videoId&&!prior.resolved&&!prior.terminalConfirmed)throw Error('原任务尚未确认结束，请继续查询原编号。');if(['unknown','submitting','queued','generating','deferred','download','checking'].includes(job.state))throw Error('当前任务尚未结束，不能创建新尝试。');if(job.state==='blocked'&&!job.current)throw Error('请先恢复原任务或校验，不要重复生成。');const candidate=promptSpec({...job,...changes,prompt,dialogue});const check=validateJob(candidate,this.context().project.assets,this.context().project.jobs);if(check.errors.length)throw Error(check.errors.join('；'));Object.assign(job,candidate);job.revisionReason=reason;job.review='pending';job.error=null;if(job.attempts.at(-1))job.attempts.at(-1).resolved=true;job.current=null;job.state='pending';this.event('revision',reason,job.id);await this.persist(true);}
+  async redo(job,prompt,dialogue,reason,changes={},expectedStamp=null){
+    if(this.activeUid===job.uid||this.localChecks.has(job.uid))throw Error('此任务正在处理，请继续原任务。');
+    const stamp=revisionStamp(job);if(expectedStamp&&stamp!==expectedStamp)throw Error('原任务状态已变化，请重新打开原任务后修订。');
+    const candidate=revisedJob(job,{...changes,prompt,dialogue});
+    await this.payload(candidate); // Read fresh source bytes and verify their hashes before queue intake.
+    if(this.activeUid===job.uid||this.localChecks.has(job.uid)||revisionStamp(job)!==stamp||revisionProblem(job))throw Error('原任务状态已变化，请重新打开原任务后修订。');
+    const {project,folder}=this.context(),before=structuredClone(job),session=project.revisionDraft;
+    delete job.promptSeconds;delete job.sourceOriginalPrompt;
+    Object.assign(job,candidate,{revisionReason:reason,review:'pending',error:null,current:null,state:'pending',autoSubmit:changes.autoSubmit??true,updatedAt:now()});
+    if(job.attempts.at(-1))job.attempts=job.attempts.map((a,i)=>i===job.attempts.length-1?{...a,resolved:true}:a);
+    const commitProject={...project};delete commitProject.revisionDraft;
+    const eventsBefore=project.events.length;this.event('revision',reason,job.id);this.event('input_approved','修订素材已实际读取并核对哈希；沿用原镜号与历史，等待提交',job.id);
+    const added=project.events.slice(eventsBefore);
+    try{await saveProject(commitProject,folder,{requireDisk:true});delete project.revisionDraft;}catch(error){for(const key of Object.keys(job))delete job[key];Object.assign(job,before);if(session)project.revisionDraft=session;project.events=project.events.filter(e=>!added.includes(e));await saveProject(project,folder).catch(()=>{});throw error;}
+    this.onChange();
+  }
   async assemble(episode,onProgress=()=>{}){if(this.running||this.refreshing||this.assembling)throw Error('当前仍在处理任务，请稍后再拼接。');this.assembling=true;this.setActivity({kind:'assemble',label:'正在核对本集输入与加载媒体引擎'});try{return await this.assembleFiles(episode,progress=>{this.setActivity({kind:'assemble',label:'正在本地拼接 '+episode,percent:Math.min(99,Math.max(0,progress*100))});onProgress(progress);});}finally{this.assembling=false;this.setActivity({kind:'idle'});this.onChange();}}
   async assembleFiles(episode,onProgress){const {project,folder}=this.context();const jobs=project.jobs.filter(j=>j.episode===episode);if(!jobs.length||jobs.some(j=>!['ready','approved'].includes(j.state)||j.current?.qa?.technical!=='passed'))throw Error('本集仍有未通过技术校验的镜头。');if(new Set(jobs.map(j=>j.aspect)).size!==1)throw Error('本集画幅不同，请先统一画幅或分组。');if(jobs.some(j=>!j.current.qa.hasAudio))throw Error('本集中存在无音轨镜头，请先在本地编辑器补音轨。');
     const fingerprints=jobs.map(j=>({id:j.id,path:j.current.path,sha256:j.current.sha256}));const files=[];for(const j of jobs){const b=await blob(j.current.blobKey);if(await sha256(b)!==j.current.sha256)throw Error(j.id+'文件哈希不一致。');files.push(b);}

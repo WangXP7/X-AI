@@ -158,7 +158,7 @@ export class AssetLibrary {
     const {project,folder}=this.context(),original=project.assets.find(a=>a.id===asset.derivedFrom);
     if(original&&!asset.errors.length&&original.effectiveAssetId!==asset.id){const previous=original.effectiveAssetId;original.effectiveAssetId=asset.id;
       for(const studio of project.studios)if(studio.assetIds.includes(original.id)||studio.assetIds.includes(previous)){if(!studio.assetIds.includes(asset.id))studio.assetIds.push(asset.id);}
-      for(const job of project.jobs)if(!job.attempts?.length){job.assetIds=job.assetIds.map(id=>id===original.id||(previous&&id===previous)?asset.id:id);if(job.firstFrame===original.id||(previous&&job.firstFrame===previous))job.firstFrame=asset.id;if(job.lastFrame===original.id||(previous&&job.lastFrame===previous))job.lastFrame=asset.id;}
+      for(const job of project.jobs)if(job.uid!==project.revisionDraft?.jobUid&&!job.attempts?.length){job.assetIds=job.assetIds.map(id=>id===original.id||(previous&&id===previous)?asset.id:id);if(job.firstFrame===original.id||(previous&&job.firstFrame===previous))job.firstFrame=asset.id;if(job.lastFrame===original.id||(previous&&job.lastFrame===previous))job.lastFrame=asset.id;}
       recordEvent(project,'reference_remapped',`${original.path} → ${asset.path}；仅新任务与尚未提交任务使用优化版`);await saveProject(project,disk?folder:null);
     }
   }

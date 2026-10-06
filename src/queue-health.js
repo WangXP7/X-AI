@@ -36,7 +36,7 @@ export function remoteBlocks(job){
 }
 export function inspectQueue(project,runner={},at=Date.now()){
   const jobs=project.jobs||[],unknown=jobs.find(unresolvedSubmission),paused=!!(runner.pauseNew||project.queueControl?.paused);
-  const pending=jobs.find(j=>j.state==='pending'&&j.autoSubmit),remote=jobs.find(remoteBlocks);
+  const eligible=jobs.filter(j=>j.uid!==project.revisionDraft?.jobUid),pending=eligible.find(j=>j.state==='pending'&&j.autoSubmit),remote=eligible.find(remoteBlocks);
   if(unknown)return {code:'unconfirmed',message:`${unknown.id} 的提交回执尚未确认，已保留原请求，防止重复生成`,canStart:false};
   if(remote?.state==='blocked')return {code:'blocked',message:`${remote.id} 尚未释放原任务：${remote.error||'正在核验恢复条件'}`,canStart:false};
   if(runner.running){
@@ -53,6 +53,7 @@ export function inspectQueue(project,runner={},at=Date.now()){
   if(paused)return {code:'paused',message:'你已暂停新提交，点击“开始 / 继续队列”后恢复',canStart:false};
   if(pending?.continuityFrom&&!jobs.some(j=>j.id===pending.continuityFrom&&['ready','approved'].includes(j.state)&&j.current?.lastFrameKey))return {code:'dependency',message:`${pending.id} 正等待 ${pending.continuityFrom} 的技术校验和末帧，完成后自动接续`,canStart:false};
   if(pending)return {code:'resume',message:`正在自动接续 ${pending.id}，无需等待前片内容审核`,canStart:true};
+  if(project.revisionDraft)return {code:'editing',message:'原任务正在创作框修订，保存后继续；其他任务照常处理',canStart:false};
   if(jobs.some(j=>j.state==='pending'))return {code:'manual',message:'专家任务等待开始，点击“开始 / 继续队列”即可',canStart:false};
   return {code:'idle',message:'队列已处理完毕；内容审核不阻塞新镜生成',canStart:false};
 }
